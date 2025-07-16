@@ -25,18 +25,18 @@ A powerful and modular API-based Hotel Management System built using **Django** 
 ## 🧱 Project Structure
 
 HMS/
-├── accounts/          # Custom user model and auth
-├── billing/           # Invoice and payments
-├── cms/               # Banners, testimonials, meta tags
-├── communication/     # Messages, notifications, feedback
-├── crm/               # Customer data
-├── hotel/             # Hotel, room, booking
-├── laundry/           # Laundry orders
-├── marketing/         # Campaigns and promotions
-├── permissions/       # Roles and model-level permission API
-├── restaurant/        # Menu, orders
-├── reviews/           # Customer reviews
-├── accounting/        # Financial tracking
+├── accounts/          # Custom user model and auth                                                              
+├── billing/           # Invoice and payments                                                                   
+├── cms/               # Banners, testimonials, meta tags                                                      
+├── communication/     # Messages, notifications, feedback                                                         
+├── crm/               # Customer data                                                                             
+├── hotel/             # Hotel, room, booking                                                       
+├── laundry/           # Laundry orders                                                       
+├── marketing/         # Campaigns and promotions                                                       
+├── permissions/       # Roles and model-level permission API                                                       
+├── restaurant/        # Menu, orders                                                       
+├── reviews/           # Customer reviews                                                       
+├── accounting/        # Financial tracking                                                       
 ├── manage.py
 └── requirements.txt
 
