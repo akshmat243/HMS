@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Django migrations
+**/migrations/
+!*/migrations/__init__.py  # Keep init so Django detects the package
+
+# SQLite database
+db.sqlite3
+
+# Environment variables
+.env
+
+# VS Code settings (if applicable)
+.vscode/
+
+# MacOS & Linux junk
+.DS_Store
+
+# Windows junk
+Thumbs.db
+
+# Python virtual environments
+venv/
+.venv/
+
+# Logs and debug
+*.log
+
+# Static and media files (optional if you generate them at runtime)
+staticfiles/
+media/
+
+# Coverage and testing
+htmlcov/
+.coverage
+.tox/
+.pytest_cache/
