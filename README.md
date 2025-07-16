@@ -25,20 +25,21 @@ A powerful and modular API-based Hotel Management System built using **Django** 
 ## 🧱 Project Structure
 
 HMS/
-├── hotel/ # Hotel, room, booking
-├── restaurant/ # Menu, orders
-├── laundry/ # Laundry orders
-├── crm/ # Customer data
-├── cms/ # Banners, testimonials, meta tags
-├── billing/ # Invoice and payments
-├── accounting/ # Financial tracking
-├── marketing/ # Campaigns and promotions
-├── communication/ # Messages, notifications, feedback
-├── reviews/ # Customer reviews
-├── permissions/ # Roles and model-level permission API
-├── accounts/ # Custom user model and auth
+├── accounts/          # Custom user model and auth
+├── billing/           # Invoice and payments
+├── cms/               # Banners, testimonials, meta tags
+├── communication/     # Messages, notifications, feedback
+├── crm/               # Customer data
+├── hotel/             # Hotel, room, booking
+├── laundry/           # Laundry orders
+├── marketing/         # Campaigns and promotions
+├── permissions/       # Roles and model-level permission API
+├── restaurant/        # Menu, orders
+├── reviews/           # Customer reviews
+├── accounting/        # Financial tracking
 ├── manage.py
 └── requirements.txt
+
 
 
 ---
@@ -87,18 +88,3 @@ This project is licensed under the MIT License
 
 👨‍💻 Author
 Developed by Aakash Kumawat
-
-
----
-
-### ✅ To Display This on GitHub:
-
-1. Go to your repo: https://github.com/akshmat243/HMS  
-2. Click **"Add file" → "Create new file"**
-3. Name it `README.md`
-4. Paste the content above
-5. Click **Commit new file**
-
-Done! Your GitHub repo homepage will now show this professional-looking README.
-
-Would you like a dark-themed badge version or a project logo added?
