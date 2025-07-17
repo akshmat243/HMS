@@ -10,15 +10,19 @@ class HasModelPermission(BasePermission):
         if not role:
             return False
 
+        # Auto infer model_name from view's queryset
         model_name = getattr(view, 'model_name', None)
-        permission_code = getattr(view, 'permission_code', None)
+        if not model_name and hasattr(view, 'queryset'):
+            model_class = view.queryset.model
+            model_name = model_class.__name__  # Use class name like 'Hotel', 'Room'
 
+        permission_code = getattr(view, 'permission_code', None)
         if not model_name or not permission_code:
             return False
 
         try:
-            model_obj = AppModel.objects.get(name=model_name)
-            perm_type = PermissionType.objects.get(code=permission_code)
+            model_obj = AppModel.objects.get(name__iexact=model_name)
+            perm_type = PermissionType.objects.get(code=permission_code.lower())
             return RoleModelPermission.objects.filter(
                 role=role,
                 model=model_obj,
