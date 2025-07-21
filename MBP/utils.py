@@ -23,6 +23,37 @@ def populate_app_models():
 # from MBP.utils import populate_app_models
 # populate_app_models()
 
+import json
+import uuid
+import datetime
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models.fields.files import FileField, ImageField
+from django.db.models import Model
+
+def serialize_instance(instance):
+    data = {}
+    for field in instance._meta.fields:
+        field_name = field.name
+        value = getattr(instance, field_name, None)
+
+        if isinstance(field, (FileField, ImageField)):
+            data[field_name] = value.url if value else None
+
+        elif isinstance(value, (uuid.UUID, datetime.datetime, datetime.date)):
+            data[field_name] = str(value)
+
+        elif isinstance(value, Model):
+            data[field_name] = str(value)
+
+        else:
+            try:
+                json.dumps(value, cls=DjangoJSONEncoder)
+                data[field_name] = value
+            except (TypeError, ValueError):
+                data[field_name] = str(value)
+
+    return data
+
 
 def get_client_ip(request):
     x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')

@@ -37,3 +37,4 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
     queryset = RoomServiceRequest.objects.all()
     serializer_class = RoomServiceRequestSerializer
     model_name = 'RoomServiceRequest'
+

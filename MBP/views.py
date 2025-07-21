@@ -2,7 +2,7 @@ from rest_framework import viewsets
 from .permissions import HasModelPermission
 from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog
 from .serializers import RoleSerializer, AppModelSerializer, PermissionTypeSerializer, RoleModelPermissionSerializer, AuditLogSerializer
-
+from .utils import serialize_instance
 
 class ProtectedModelViewSet(viewsets.ModelViewSet):
     model_name = None
@@ -25,7 +25,7 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
         serializer.context['request'] = self.request
         instance = serializer.save()
         instance._request_user = self.request.user
-        print("2.1 ✅ Request user on instance:", instance._request_user)
+        print("2.1 Request user on instance:", instance._request_user)
         if hasattr(instance, 'created_by') and not instance.created_by:
             instance.created_by = self.request.user
 
@@ -35,7 +35,7 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         instance._old_data = serialize_instance(instance)
         instance._request_user = self.request.user
-        print("2.2 ✅ Request user on instance:", instance._request_user)
+        print("2.2 Request user on instance:", instance._request_user)
         updated_instance = serializer.save()
         updated_instance._request_user = self.request.user
         updated_instance._old_data = instance._old_data
@@ -44,7 +44,7 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         instance._request_user = self.request.user
-        print("2.3 ✅ Request user on instance:", instance._request_user)
+        print("2.3 Request user on instance:", instance._request_user)
         instance.delete()
 
 

@@ -2,39 +2,8 @@ from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
 from .models import AuditLog
 from .utils import log_audit_from_user
+from .utils import serialize_instance
 
-from django.core.serializers.json import DjangoJSONEncoder
-import json
-import uuid
-import datetime
-
-def serialize_instance(instance):
-    data = {}
-
-    for field in instance._meta.fields:
-        value = getattr(instance, field.name, None)
-
-        if isinstance(value, (uuid.UUID, datetime.datetime)):
-            data[field.name] = str(value)
-        else:
-            try:
-                json.dumps(value, cls=DjangoJSONEncoder)
-                data[field.name] = value
-            except TypeError:
-                data[field.name] = str(value)
-
-    return data
-
-
-@receiver(pre_save)
-def capture_old_data(sender, instance, **kwargs):
-    if sender == AuditLog:
-        return
-    if instance.pk:
-        try:
-            instance._old_data = serialize_instance(sender.objects.get(pk=instance.pk))
-        except sender.DoesNotExist:
-            instance._old_data = None
 
 @receiver(post_save)
 def log_create_or_update(sender, instance, created, **kwargs):
@@ -48,8 +17,8 @@ def log_create_or_update(sender, instance, created, **kwargs):
 
     model_name = sender.__name__
     object_id = instance.pk
-    new_data = serialize_instance(instance)
     old_data = getattr(instance, '_old_data', None)
+    new_data = serialize_instance(instance)
 
     if created:
         log_audit_from_user(

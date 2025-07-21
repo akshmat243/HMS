@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest
-from django.utils import timezone
 
 
 class HotelSerializer(serializers.ModelSerializer):
@@ -9,8 +8,11 @@ class HotelSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate_name(self, value):
-        if Hotel.objects.filter(name=value).exclude(id=self.instance.id if self.instance else None).exists():
-            raise serializers.ValidationError("Hotel with this name already exists.")
+        qs = Hotel.objects.filter(name=value)
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("A hotel with this name already exists.")
         return value
 
 
@@ -20,8 +22,11 @@ class RoomCategorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate_name(self, value):
-        if RoomCategory.objects.filter(name=value).exclude(id=self.instance.id if self.instance else None).exists():
-            raise serializers.ValidationError("Room category with this name already exists.")
+        qs = RoomCategory.objects.filter(name=value)
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("A room category with this name already exists.")
         return value
 
 
@@ -34,8 +39,11 @@ class RoomSerializer(serializers.ModelSerializer):
         hotel = data.get('hotel', self.instance.hotel if self.instance else None)
         number = data.get('room_number', self.instance.room_number if self.instance else None)
 
-        if Room.objects.filter(hotel=hotel, room_number=number).exclude(id=self.instance.id if self.instance else None).exists():
-            raise serializers.ValidationError("Room with this number already exists in this hotel.")
+        qs = Room.objects.filter(hotel=hotel, room_number=number)
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("This room number already exists in the hotel.")
         return data
 
 
@@ -51,7 +59,7 @@ class BookingSerializer(serializers.ModelSerializer):
         check_out = data.get('check_out', self.instance.check_out if self.instance else None)
 
         if check_in and check_out and check_in >= check_out:
-            raise serializers.ValidationError("Check-out date must be after check-in date.")
+            raise serializers.ValidationError("Check-out must be after check-in.")
 
         overlapping = Booking.objects.filter(
             room=room,
@@ -60,9 +68,8 @@ class BookingSerializer(serializers.ModelSerializer):
         )
         if self.instance:
             overlapping = overlapping.exclude(id=self.instance.id)
-
         if overlapping.exists():
-            raise serializers.ValidationError("Room is already booked for these dates.")
+            raise serializers.ValidationError("This room is already booked for the selected dates.")
 
         return data
 
@@ -79,17 +86,16 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
         room = data.get('room', self.instance.room if self.instance else None)
         service_type = data.get('service_type', self.instance.service_type if self.instance else None)
 
-        # Validate user belongs to booking (optional)
-        if booking and user and booking.user != user:
-            raise serializers.ValidationError("This user is not associated with the booking.")
+        # Optional: check if user matches booking
+        if booking and user and hasattr(booking, 'user') and booking.user != user:
+            raise serializers.ValidationError("This user is not associated with the selected booking.")
 
-        # Prevent repeated unresolved service request of same type for same room
         if RoomServiceRequest.objects.filter(
             booking=booking,
             room=room,
             service_type=service_type,
             is_resolved=False
         ).exclude(id=self.instance.id if self.instance else None).exists():
-            raise serializers.ValidationError(f"A similar unresolved request for {service_type} already exists.")
+            raise serializers.ValidationError("A similar unresolved service request already exists for this room.")
 
         return data
