@@ -6,20 +6,28 @@ class HotelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Hotel
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate_name(self, value):
         qs = Hotel.objects.filter(name=value)
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
         if qs.exists():
-            raise serializers.ValidationError("A hotel with this name already exists.")
+            raise serializers.ValidationError("Hotel with this name already exists.")
         return value
 
 
 class RoomCategorySerializer(serializers.ModelSerializer):
+    
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
+    
     class Meta:
         model = RoomCategory
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate_name(self, value):
         qs = RoomCategory.objects.filter(name=value)
@@ -31,9 +39,22 @@ class RoomCategorySerializer(serializers.ModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
+    
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
+    room_category = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=RoomCategory.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
     class Meta:
         model = Room
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate(self, data):
         hotel = data.get('hotel', self.instance.hotel if self.instance else None)
@@ -48,6 +69,17 @@ class RoomSerializer(serializers.ModelSerializer):
 
 
 class BookingSerializer(serializers.ModelSerializer):
+    
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
+    room = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Room.objects.all()
+    )
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    
     class Meta:
         model = Booking
         fields = '__all__'
@@ -75,10 +107,18 @@ class BookingSerializer(serializers.ModelSerializer):
 
 
 class RoomServiceRequestSerializer(serializers.ModelSerializer):
+    
+    room = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Room.objects.all()
+    )
+    booking = serializers.PrimaryKeyRelatedField(queryset=Booking.objects.all())
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    
     class Meta:
         model = RoomServiceRequest
         fields = '__all__'
-        read_only_fields = ['requested_at']
+        read_only_fields = ['requested_at', 'slug']
 
     def validate(self, data):
         booking = data.get('booking', self.instance.booking if self.instance else None)

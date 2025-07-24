@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.utils.text import slugify
 
 class Account(models.Model):
     ACCOUNT_TYPE_CHOICES = [
@@ -10,7 +11,8 @@ class Account(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(unique=True, blank=True)
     type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
@@ -18,6 +20,11 @@ class Account(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.type})"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 
 class Transaction(models.Model):
@@ -35,4 +42,4 @@ class Transaction(models.Model):
     reference = models.CharField(max_length=100, blank=True)
 
     def __str__(self):
-        return f"{self.type.title()} {self.amount} to {self.account.name}"
+        return f"{self.type.title()} ₹{self.amount} - {self.account.name}"

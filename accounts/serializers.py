@@ -4,7 +4,6 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-
 class RegisterUserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 
@@ -15,27 +14,32 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password')
-
         user = User(**validated_data)
         user.set_password(password)
         user.is_active = False
         user.role = None 
         user.created_by = None
         user.save()
-        
         return user
 
+
 class UserSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
-    role_id = serializers.UUIDField(write_only=True, required=True)
+    
+    role = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Role.objects.all()
+    )
+    
+    password = serializers.CharField(write_only=True, required=False)
+    role_slug = serializers.SlugField(write_only=True, required=False)
     role = serializers.SerializerMethodField(read_only=True)
     created_by = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'full_name', 'password',
-            'role_id', 'role', 'is_active', 'date_joined', 'created_by'
+            'id', 'email', 'full_name', 'slug', 'password',
+            'role_slug', 'role', 'is_active', 'date_joined', 'created_by'
         ]
         read_only_fields = ['id', 'date_joined', 'created_by', 'role']
 
@@ -46,23 +50,28 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.created_by.email if obj.created_by else None
 
     def create(self, validated_data):
-        password = validated_data.pop('password')
-        role_id = validated_data.pop('role_id')
-        try:
-            role = Role.objects.get(id=role_id)
-        except Role.DoesNotExist:
-            raise serializers.ValidationError({"role_id": "Invalid role ID."})
+        password = validated_data.pop('password', None)
+        role_slug = validated_data.pop('role_slug', None)
+
+        role = None
+        if role_slug:
+            try:
+                role = Role.objects.get(slug=role_slug)
+            except Role.DoesNotExist:
+                raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
         user = User(**validated_data)
-        user.set_password(password)
-        user.role = role
+        if password:
+            user.set_password(password)
+        if role:
+            user.role = role
         user.is_active = True
-
+        user.save()
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
-        role_id = validated_data.pop('role_id', None)
+        role_slug = validated_data.pop('role_slug', None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -70,11 +79,12 @@ class UserSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
 
-        if role_id:
+        if role_slug:
             try:
-                role = Role.objects.get(id=role_id)
+                role = Role.objects.get(slug=role_slug)
                 instance.role = role
             except Role.DoesNotExist:
-                raise serializers.ValidationError({"role_id": "Invalid role ID."})
+                raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
-        return instance 
+        instance.save()
+        return instance

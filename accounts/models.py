@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
+from django.utils.text import slugify
 import uuid
 from MBP.models import Role
 
@@ -24,7 +25,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=100, blank=True)
-    role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.CASCADE)
+    role = models.ForeignKey('MBP.Role', null=True, blank=True, on_delete=models.CASCADE)
+    slug = models.SlugField(unique=True, blank=True)
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
@@ -37,6 +39,17 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.full_name or self.email.split('@')[0])
+            slug = base_slug
+            count = 1
+            while User.objects.filter(slug=slug).exists():
+                slug = f"{base_slug}-{count}"
+                count += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
     
     class Meta:
         verbose_name = "User"

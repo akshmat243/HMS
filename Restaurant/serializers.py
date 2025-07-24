@@ -2,16 +2,26 @@ from rest_framework import serializers
 from .models import (
     MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem
 )
+from Hotel.models import Hotel
 
 
 class MenuCategorySerializer(serializers.ModelSerializer):
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
+
     class Meta:
         model = MenuCategory
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate_name(self, value):
-        hotel = self.initial_data.get('hotel')
-        qs = MenuCategory.objects.filter(name=value, hotel_id=hotel)
+        hotel_slug = self.initial_data.get('hotel')
+        hotel = Hotel.objects.filter(slug=hotel_slug).first()
+        if not hotel:
+            raise serializers.ValidationError("Invalid hotel.")
+        qs = MenuCategory.objects.filter(name=value, hotel=hotel)
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
         if qs.exists():
@@ -20,9 +30,15 @@ class MenuCategorySerializer(serializers.ModelSerializer):
 
 
 class MenuItemSerializer(serializers.ModelSerializer):
+    category = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=MenuCategory.objects.all()
+    )
+
     class Meta:
         model = MenuItem
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate(self, data):
         name = data.get('name', self.instance.name if self.instance else None)
@@ -36,13 +52,22 @@ class MenuItemSerializer(serializers.ModelSerializer):
 
 
 class TableSerializer(serializers.ModelSerializer):
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
+
     class Meta:
         model = Table
         fields = '__all__'
+        read_only_fields = ['slug']
 
     def validate_number(self, value):
-        hotel = self.initial_data.get('hotel')
-        qs = Table.objects.filter(number=value, hotel_id=hotel)
+        hotel_slug = self.initial_data.get('hotel')
+        hotel = Hotel.objects.filter(slug=hotel_slug).first()
+        if not hotel:
+            raise serializers.ValidationError("Invalid hotel.")
+        qs = Table.objects.filter(number=value, hotel=hotel)
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
         if qs.exists():
@@ -51,12 +76,23 @@ class TableSerializer(serializers.ModelSerializer):
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
+    menu_item = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=MenuItem.objects.all()
+    )
+
     class Meta:
         model = OrderItem
         fields = '__all__'
 
 
 class RestaurantOrderSerializer(serializers.ModelSerializer):
+    table = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Table.objects.all(),
+        allow_null=True
+    )
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     order_items = OrderItemSerializer(many=True, required=False)
 
     class Meta:

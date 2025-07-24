@@ -37,10 +37,16 @@ class AppModel(models.Model):
 class PermissionType(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=20)
+    slug = models.SlugField(unique=True, blank=True)
     code = models.CharField(max_length=1)  # c, r, u, d
     
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 class RoleModelPermission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -62,7 +68,6 @@ class AuditLog(models.Model):
         ('create', 'Create'),
         ('update', 'Update'),
         ('delete', 'Delete'),
-        ('read', 'Read'),
         ('other', 'Other'),
     ]
 

@@ -1,8 +1,10 @@
 import uuid
 from django.db import models
+from django.utils.text import slugify
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
 
 class Lead(models.Model):
     STATUS_CHOICES = [
@@ -15,6 +17,7 @@ class Lead(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=150)
+    slug = models.SlugField(unique=True, blank=True)
     email = models.EmailField()
     phone = models.CharField(max_length=20)
     source = models.CharField(max_length=100, blank=True)
@@ -27,10 +30,22 @@ class Lead(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            new_slug = base_slug
+            counter = 1
+            while Lead.objects.filter(slug=new_slug).exists():
+                new_slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = new_slug
+        super().save(*args, **kwargs)
+
 
 class Customer(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=150)
+    slug = models.SlugField(unique=True, blank=True)
     email = models.EmailField()
     phone = models.CharField(max_length=20)
     address = models.TextField(blank=True)
@@ -40,6 +55,17 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            new_slug = base_slug
+            counter = 1
+            while Customer.objects.filter(slug=new_slug).exists():
+                new_slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = new_slug
+        super().save(*args, **kwargs)
 
 
 class Interaction(models.Model):

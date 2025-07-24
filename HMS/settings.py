@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'drf_yasg',
+    'ckeditor_uploader',
     'Hotel',
     'Restaurant',
     'Laundry',
@@ -51,6 +52,7 @@ INSTALLED_APPS = [
     'Accounting',
     'Communication',
     'Reviews',
+    'Marketing',
     'accounts',
     'MBP',
 ]
@@ -143,6 +145,8 @@ AUTH_USER_MODEL = 'accounts.User'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+CKEDITOR_UPLOAD_PATH = "pages/"
 
 CORS_ALLOW_ALL_ORIGINS = True
 

@@ -1,8 +1,15 @@
 from rest_framework import viewsets
 from .permissions import HasModelPermission
 from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog
-from .serializers import RoleSerializer, AppModelSerializer, PermissionTypeSerializer, RoleModelPermissionSerializer, AuditLogSerializer
+from .serializers import (
+    RoleSerializer,
+    AppModelSerializer,
+    PermissionTypeSerializer,
+    RoleModelPermissionSerializer,
+    AuditLogSerializer
+)
 from .utils import serialize_instance
+
 
 class ProtectedModelViewSet(viewsets.ModelViewSet):
     model_name = None
@@ -18,54 +25,53 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
             self.permission_code = 'd'
         else:
             self.permission_code = 'r'
-
         return [permission() for permission in self.permission_classes]
 
     def perform_create(self, serializer):
         serializer.context['request'] = self.request
         instance = serializer.save()
         instance._request_user = self.request.user
-        print("2.1 Request user on instance:", instance._request_user)
         if hasattr(instance, 'created_by') and not instance.created_by:
             instance.created_by = self.request.user
-
         instance.save()
 
     def perform_update(self, serializer):
         instance = self.get_object()
         instance._old_data = serialize_instance(instance)
         instance._request_user = self.request.user
-        print("2.2 Request user on instance:", instance._request_user)
         updated_instance = serializer.save()
         updated_instance._request_user = self.request.user
         updated_instance._old_data = instance._old_data
-
         updated_instance.save()
 
     def perform_destroy(self, instance):
         instance._request_user = self.request.user
-        print("2.3 Request user on instance:", instance._request_user)
         instance.delete()
-
 
 
 class RoleViewSet(ProtectedModelViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
     model_name = 'Role'
+    lookup_field = 'slug'
+
 
 class AppModelViewSet(ProtectedModelViewSet):
     queryset = AppModel.objects.all()
     serializer_class = AppModelSerializer
     model_name = 'AppModel'
+    lookup_field = 'slug'
+
 
 class PermissionTypeViewSet(ProtectedModelViewSet):
     queryset = PermissionType.objects.all()
     serializer_class = PermissionTypeSerializer
     model_name = 'PermissionType'
+    lookup_field = 'slug'
+
 
 class RoleModelPermissionViewSet(ProtectedModelViewSet):
-    queryset = RoleModelPermission.objects.all()
+    queryset = RoleModelPermission.objects.select_related('role', 'model', 'permission_type').all()
     serializer_class = RoleModelPermissionSerializer
     model_name = 'RoleModelPermission'
 
@@ -74,12 +80,11 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AuditLog.objects.all().order_by('-timestamp')
     serializer_class = AuditLogSerializer
     model_name = 'AuditLog'
-    permission_code = 'r'
     permission_classes = [HasModelPermission]
+    permission_code = 'r'  # read-only
 
     def get_queryset(self):
         queryset = super().get_queryset()
-
         user_email = self.request.query_params.get('user')
         action = self.request.query_params.get('action')
 
@@ -87,10 +92,4 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(user__email__icontains=user_email)
         if action:
             queryset = queryset.filter(action=action)
-
         return queryset
-
-
-# GET /api/audit/logs/ → list of logs
-# GET /api/audit/logs/?user=admin → filter by user email
-# GET /api/audit/logs/?action=create → filter by action type

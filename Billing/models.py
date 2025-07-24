@@ -1,44 +1,61 @@
 import uuid
 from django.db import models
+from django.utils.text import slugify
+from django.contrib.auth import get_user_model
 from Hotel.models import Booking
-from CRM.models import Customer
+
+User = get_user_model()
 
 class Invoice(models.Model):
     STATUS_CHOICES = [
-        ('paid', 'Paid'),
         ('unpaid', 'Unpaid'),
-        ('cancelled', 'Cancelled'),
+        ('partial', 'Partial'),
+        ('paid', 'Paid'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='invoices')
-    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, related_name='invoices')
-    invoice_date = models.DateField(auto_now_add=True)
+    issued_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='issued_invoices')
+    issued_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateField()
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
-    discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    final_amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
-    due_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(f"{self.booking.id}-{self.issued_at.timestamp()}")
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Invoice #{self.id} - {self.booking}"
+        return f"Invoice #{self.slug} - {self.status}"
+
+
+class InvoiceItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='items')
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self):
+        return self.description
 
 
 class Payment(models.Model):
     METHOD_CHOICES = [
         ('cash', 'Cash'),
         ('card', 'Card'),
-        ('upi', 'UPI'),
-        ('bank_transfer', 'Bank Transfer'),
+        ('online', 'Online'),
+        ('wallet', 'Wallet'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payments')
-    method = models.CharField(max_length=20, choices=METHOD_CHOICES)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
     payment_date = models.DateTimeField(auto_now_add=True)
-    reference_number = models.CharField(max_length=100, blank=True)
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES)
+    reference = models.CharField(max_length=100, blank=True)
 
     def __str__(self):
-        return f"Payment #{self.id} - {self.method}"
+        return f"Payment for Invoice {self.invoice.slug}"

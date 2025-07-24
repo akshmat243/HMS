@@ -13,7 +13,6 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-# from accounts.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.throttling import UserRateThrottle
 
@@ -23,6 +22,7 @@ class UserViewSet(ProtectedModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
     model_name = 'User'
+    lookup_field = 'slug'
 
     def get_permissions(self):
         if self.request.user.is_superuser:
@@ -43,28 +43,29 @@ class UserViewSet(ProtectedModelViewSet):
             return User.objects.all().order_by('-date_joined')
         return User.objects.filter(created_by=user).order_by('-date_joined')
 
-    @action(detail=True, methods=['post'], url_path='assign-role', permission_classes=[HasModelPermission])
-    def assign_role(self, request, pk=None):
+    @action(detail=True, methods=['patch'], url_path='assign-role', permission_classes=[HasModelPermission])
+    def assign_role(self, request, slug=None):
         try:
             user = self.get_object()
-            role_id = request.data.get('role_id')
-            role = Role.objects.get(id=role_id)
+
+            role_slug = request.data.get('role_slug')
+            if not role_slug:
+                return Response({"error": "role_slug is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            role = Role.objects.get(slug=role_slug)
 
             user.role = role
             user.is_active = True
             user._request_user = request.user
             user.save()
-            
+
             log_audit(
                 request=request,
                 action='update',
                 model_name='User',
                 object_id=user.pk,
                 details=f"Assigned role '{role.name}' and activated user {user.email}",
-                new_data={
-                    "role": role.name,
-                    "is_active": True
-                }
+                new_data={"role": role.name, "is_active": True}
             )
 
             return Response({"message": "Role assigned and user activated."}, status=status.HTTP_200_OK)

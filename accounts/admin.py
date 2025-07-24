@@ -1,5 +1,4 @@
 from django.contrib import admin
-# from .models import User
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
 
@@ -9,10 +8,10 @@ User = get_user_model()
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     model = User
-    list_display = ('email', 'full_name', 'role', 'is_active', 'created_by', 'date_joined')
+    list_display = ('email', 'full_name', 'slug', 'role', 'is_active', 'created_by', 'date_joined')
     list_filter = ('is_active', 'role')
-    readonly_fields = ('date_joined',)
-    search_fields = ('email', 'full_name')
+    readonly_fields = ('date_joined', 'slug')
+    search_fields = ('email', 'slug', 'full_name')
 
     fieldsets = (
         (None, {'fields': ('email', 'full_name', 'password')}),
