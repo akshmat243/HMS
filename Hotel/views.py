@@ -102,13 +102,11 @@ class RoomViewSet(ProtectedModelViewSet):
         except ValueError:
             return Response({"error": "Invalid date or number format."}, status=400)
 
-        # Step 1: Get all rooms that are NOT booked during the range
         booked_room_ids = Booking.objects.filter(
             Q(check_in__lt=check_out) & Q(check_out__gt=check_in),
             status__in=['pending', 'confirmed', 'checked_in']
         ).values_list('room_id', flat=True)
 
-        # Step 2: Get available rooms
         available_rooms = Room.objects.exclude(id__in=booked_room_ids).filter(
             is_available=True,
             status='available'
@@ -156,4 +154,5 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
     queryset = RoomServiceRequest.objects.all()
     serializer_class = RoomServiceRequestSerializer
     model_name = 'RoomServiceRequest'
+    lookup_field = 'slug'
 

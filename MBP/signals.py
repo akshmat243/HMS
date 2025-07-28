@@ -9,10 +9,10 @@ from .utils import serialize_instance
 def log_create_or_update(sender, instance, created, **kwargs):
     if sender == AuditLog:
         return
-    print(f"1 🚨 Signal fired for {sender.__name__}, created: {created}")
 
     user = getattr(instance, '_request_user', None)
     if not user:
+        print("⚠️ No _request_user found. Skipping.")
         return
 
     model_name = sender.__name__
@@ -26,7 +26,7 @@ def log_create_or_update(sender, instance, created, **kwargs):
             action='create',
             model_name=model_name,
             object_id=object_id,
-            details=f"Signal: Created {model_name}: {instance}",
+            details=f"Created {model_name}",
             new_data=new_data
         )
     else:
@@ -35,10 +35,11 @@ def log_create_or_update(sender, instance, created, **kwargs):
             action='update',
             model_name=model_name,
             object_id=object_id,
-            details=f"Signal: Updated {model_name}: {instance}",
+            details=f"Updated {model_name}",
             old_data=old_data,
             new_data=new_data
         )
+
 
 @receiver(post_delete)
 def log_deletion(sender, instance, **kwargs):

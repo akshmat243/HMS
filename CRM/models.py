@@ -77,6 +77,7 @@ class Interaction(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='interactions')
     method = models.CharField(max_length=20, choices=METHOD_CHOICES)
     notes = models.TextField()
@@ -85,3 +86,9 @@ class Interaction(models.Model):
 
     def __str__(self):
         return f"{self.method.title()} - {self.customer.name}"
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.customer.name}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

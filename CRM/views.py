@@ -21,4 +21,4 @@ class InteractionViewSet(ProtectedModelViewSet):
     queryset = Interaction.objects.all()
     serializer_class = InteractionSerializer
     model_name = 'Interaction'
-    lookup_field = 'id'
+    lookup_field = 'slug'

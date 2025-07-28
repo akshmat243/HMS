@@ -91,6 +91,7 @@ class RestaurantOrder(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)  # New field
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='restaurant_orders')
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, related_name='orders')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -100,9 +101,17 @@ class RestaurantOrder(models.Model):
     def __str__(self):
         return f"Order #{self.id} - Table {self.table.number if self.table else 'N/A'}"
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            table_number = self.table.number if self.table else 'table'
+            base = f"{table_number}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)
+
 
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)  # New slug field
     order = models.ForeignKey(RestaurantOrder, on_delete=models.CASCADE, related_name='order_items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)
@@ -110,3 +119,9 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.menu_item.name} x {self.quantity}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.menu_item.name}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

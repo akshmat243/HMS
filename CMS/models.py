@@ -45,9 +45,11 @@ class Page(models.Model):
         ]
 
 
+
 class FAQ(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     question = models.CharField(max_length=255)
+    slug = models.SlugField(unique=True, blank=True)  # New
     answer = models.TextField()
     category = models.CharField(max_length=100, blank=True)
     is_active = models.BooleanField(default=True)
@@ -55,12 +57,18 @@ class FAQ(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.question)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.question
 
 
 class Banner(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)  # New
     image = models.ImageField(upload_to='cms/banners/')
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=255, blank=True)
@@ -71,6 +79,11 @@ class Banner(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.title)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.title
 
@@ -78,9 +91,16 @@ class Banner(models.Model):
 class MetaTag(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     page = models.OneToOneField(Page, on_delete=models.CASCADE, related_name='meta_tags')
+    slug = models.SlugField(unique=True, blank=True)  # New
     meta_title = models.CharField(max_length=255)
     meta_description = models.TextField()
     keywords = models.TextField(help_text="Comma-separated keywords")
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.meta_title)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Meta: {self.page.title}"
+

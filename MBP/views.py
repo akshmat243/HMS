@@ -9,6 +9,7 @@ from .serializers import (
     AuditLogSerializer
 )
 from .utils import serialize_instance
+from django.db.models.signals import post_save
 
 
 class ProtectedModelViewSet(viewsets.ModelViewSet):
@@ -31,9 +32,8 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
         serializer.context['request'] = self.request
         instance = serializer.save()
         instance._request_user = self.request.user
-        if hasattr(instance, 'created_by') and not instance.created_by:
-            instance.created_by = self.request.user
-        instance.save()
+        post_save.send(sender=instance.__class__, instance=instance, created=True)
+        # instance.save()
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -74,6 +74,7 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
     queryset = RoleModelPermission.objects.select_related('role', 'model', 'permission_type').all()
     serializer_class = RoleModelPermissionSerializer
     model_name = 'RoleModelPermission'
+    lookup_field = 'slug'
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

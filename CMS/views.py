@@ -13,18 +13,18 @@ class FAQViewSet(ProtectedModelViewSet):
     queryset = FAQ.objects.all()
     serializer_class = FAQSerializer
     model_name = 'FAQ'
-    lookup_field = 'id'
+    lookup_field = 'slug'
 
 
 class BannerViewSet(ProtectedModelViewSet):
     queryset = Banner.objects.all()
     serializer_class = BannerSerializer
     model_name = 'Banner'
-    lookup_field = 'id'
+    lookup_field = 'slug'
 
 
 class MetaTagViewSet(ProtectedModelViewSet):
     queryset = MetaTag.objects.select_related('page').all()
     serializer_class = MetaTagSerializer
     model_name = 'MetaTag'
-    lookup_field = 'id'
+    lookup_field = 'slug'

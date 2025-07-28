@@ -21,3 +21,4 @@ class FeedbackViewSet(ProtectedModelViewSet):
     queryset = Feedback.objects.all()
     serializer_class = FeedbackSerializer
     model_name = 'Feedback'
+    lookup_field = 'slug'

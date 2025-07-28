@@ -34,6 +34,7 @@ class Transaction(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)  # New slug field
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='transactions')
     date = models.DateTimeField(auto_now_add=True)
     type = models.CharField(max_length=10, choices=TRANSACTION_TYPE_CHOICES)
@@ -43,3 +44,9 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.type.title()} ₹{self.amount} - {self.account.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.type}-{self.amount}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

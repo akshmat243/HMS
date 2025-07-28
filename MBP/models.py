@@ -50,15 +50,32 @@ class PermissionType(models.Model):
 
 class RoleModelPermission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(null=True, blank=True)
     role = models.ForeignKey(Role, on_delete=models.CASCADE)
     model = models.ForeignKey(AppModel, on_delete=models.CASCADE)
     permission_type = models.ForeignKey(PermissionType, on_delete=models.CASCADE)
 
     class Meta:
         unique_together = ('role', 'model', 'permission_type')
-    
+
     def __str__(self):
         return f"{self.role.name} — {self.model.name} [{self.permission_type.name}]"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.role.name}-{self.model.name}-{self.permission_type.slug}"
+            base_slug = slugify(base)
+            unique_slug = base_slug
+            counter = 1
+
+            while RoleModelPermission.objects.filter(slug=unique_slug).exclude(pk=self.pk).exists():
+                unique_slug = f"{base_slug}-{counter}"
+                counter += 1
+
+            self.slug = unique_slug
+
+        super().save(*args, **kwargs)
+
 
 class AuditLog(models.Model):
     ACTION_CHOICES = [

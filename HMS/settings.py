@@ -27,9 +27,8 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [
-    'hms-ffti.onrender.com',
-    'localhost',  # for local testing
-    '127.0.0.1',  # for local testing
+    'localhost',
+    '127.0.0.1',  
 ]
 
 

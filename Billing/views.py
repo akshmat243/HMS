@@ -17,12 +17,14 @@ class InvoiceItemViewSet(ProtectedModelViewSet):
     queryset = InvoiceItem.objects.all().select_related('invoice')
     serializer_class = InvoiceItemSerializer
     model_name = 'InvoiceItem'
+    lookup_field = 'slug'
 
 
 class PaymentViewSet(ProtectedModelViewSet):
     queryset = Payment.objects.all().select_related('invoice')
     serializer_class = PaymentSerializer
     model_name = 'Payment'
+    lookup_field = 'slug'
     
     @action(detail=False, methods=['get'], url_path='today-revenue')
     def today_revenue(self, request):

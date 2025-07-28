@@ -157,6 +157,7 @@ class RoomServiceRequest(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)  # New slug field
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='room_services')
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='room_services')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='service_requests')
@@ -167,3 +168,10 @@ class RoomServiceRequest(models.Model):
 
     def __str__(self):
         return f"{self.service_type.title()} for Room {self.room.room_number}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            room_number = self.room.room_number if self.room else 'room'
+            base = f"{self.service_type}-{room_number}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

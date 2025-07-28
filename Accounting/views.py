@@ -14,3 +14,4 @@ class TransactionViewSet(ProtectedModelViewSet):
     queryset = Transaction.objects.select_related('account').all()
     serializer_class = TransactionSerializer
     model_name = 'Transaction'
+    lookup_field = 'slug'

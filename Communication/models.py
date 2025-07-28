@@ -47,10 +47,17 @@ class Message(models.Model):
 
 class Feedback(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='feedbacks')
     message = models.TextField()
     rating = models.PositiveIntegerField(default=5)  # 1 to 5
     submitted_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.message[:30]}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)
+        
     def __str__(self):
         return f"Feedback from {self.user} ({self.rating}⭐)"

@@ -14,7 +14,7 @@ class LaundryOrderViewSet(ProtectedModelViewSet):
     queryset = LaundryOrder.objects.all()
     serializer_class = LaundryOrderSerializer
     model_name = 'LaundryOrder'
-    lookup_field = 'id'
+    lookup_field = 'slug'
 
     def perform_create(self, serializer):
         instance = serializer.save()

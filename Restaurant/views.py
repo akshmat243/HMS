@@ -35,7 +35,7 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
     queryset = RestaurantOrder.objects.all()
     serializer_class = RestaurantOrderSerializer
     model_name = 'RestaurantOrder'
-    lookup_field = 'id'
+    lookup_field = 'slug'
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):
@@ -52,4 +52,4 @@ class OrderItemViewSet(ProtectedModelViewSet):
     queryset = OrderItem.objects.all()
     serializer_class = OrderItemSerializer
     model_name = 'OrderItem'
-    lookup_field = 'id'
+    lookup_field = 'slug'

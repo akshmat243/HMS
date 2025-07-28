@@ -45,6 +45,7 @@ class LaundryOrder(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='laundry_orders')
     room = models.ForeignKey(Room, on_delete=models.SET_NULL, null=True, related_name='laundry_orders')
     service = models.ForeignKey(LaundryService, on_delete=models.SET_NULL, null=True, related_name='laundry_orders')
@@ -57,3 +58,10 @@ class LaundryOrder(models.Model):
 
     def __str__(self):
         return f"Laundry Order #{self.id} - Room {self.room.room_number if self.room else 'N/A'}"
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            room_number = self.room.room_number if self.room else 'room'
+            base = f"{room_number}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

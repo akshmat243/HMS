@@ -1,34 +1,10 @@
-from django.apps import apps
-from .models import AppModel, AuditLog
-from django.utils.text import slugify
-
-def populate_app_models():
-    for model in apps.get_models():
-        model_name = model.__name__
-        app_label = model._meta.app_label
-        verbose_name = model._meta.verbose_name.title()
-
-        if not AppModel.objects.filter(name=model_name, app_label=app_label).exists():
-            AppModel.objects.create(
-                name=model_name,
-                slug=slugify(model_name),
-                verbose_name=verbose_name,
-                app_label=app_label,
-                description=f"Auto-added model: {verbose_name}"
-            )
-
-
-# python manage.py shell
-
-# from MBP.utils import populate_app_models
-# populate_app_models()
-
-import json
-import uuid
-import datetime
+from .models import AuditLog
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models.fields.files import FileField, ImageField
 from django.db.models import Model
+import json
+import uuid
+import datetime
 
 def serialize_instance(instance):
     data = {}
