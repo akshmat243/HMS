@@ -1,9 +1,10 @@
 from rest_framework.routers import DefaultRouter
-from .views import UserViewSet, LogoutView, LoginView, RegisterView
+from .views import UserViewSet, UserRoleViewSet, LogoutView, LoginView, RegisterView
 from django.urls import path, include
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet)
+router.register(r'user-roles', UserRoleViewSet)
 
 urlpatterns = [
     path('api/', include(router.urls)),
@@ -17,4 +18,3 @@ urlpatterns = [
 
 # Update user via PUT/PATCH /api/users/{id}/
 
-# Assign role via POST /api/users/{id}/assign-role/

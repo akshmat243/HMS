@@ -1,11 +1,23 @@
 from django.contrib import admin
-from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog
+from .models import (
+    RoleCategory, Role, AppModel, PermissionType,
+    RoleModelPermission, AuditLog
+)
+
+@admin.register(RoleCategory)
+class RoleCategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'description')
+    prepopulated_fields = {'slug': ('name',)}
+    search_fields = ('name',)
+
 
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'description')
+    list_display = ('name', 'slug', 'category', 'description')
     prepopulated_fields = {"slug": ("name",)}
     search_fields = ('name',)
+    list_filter = ('category',)
+
 
 @admin.register(AppModel)
 class AppModelAdmin(admin.ModelAdmin):
@@ -13,17 +25,19 @@ class AppModelAdmin(admin.ModelAdmin):
     prepopulated_fields = {"slug": ("name",)}
     search_fields = ('name', 'verbose_name', 'app_label')
 
+
 @admin.register(PermissionType)
 class PermissionTypeAdmin(admin.ModelAdmin):
     list_display = ('name', 'code')
     search_fields = ('name', 'code')
+
 
 @admin.register(RoleModelPermission)
 class RoleModelPermissionAdmin(admin.ModelAdmin):
     list_display = ('role_name', 'model_name', 'permission_name')
     list_filter = ('role', 'model', 'permission_type')
     search_fields = ('role__name', 'model__name', 'permission_type__name')
-    
+
     def role_name(self, obj):
         return obj.role.name
 
@@ -32,6 +46,7 @@ class RoleModelPermissionAdmin(admin.ModelAdmin):
 
     def permission_name(self, obj):
         return obj.permission_type.name
+
 
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):

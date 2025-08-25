@@ -12,7 +12,7 @@ def log_create_or_update(sender, instance, created, **kwargs):
 
     user = getattr(instance, '_request_user', None)
     if not user:
-        print("⚠️ No _request_user found. Skipping.")
+        print("No _request_user found. Skipping.")
         return
 
     model_name = sender.__name__

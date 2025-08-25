@@ -40,3 +40,6 @@ htmlcov/
 .coverage
 .tox/
 .pytest_cache/
+
+# docker ignore
+.dockerignore

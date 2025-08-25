@@ -1,11 +1,10 @@
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.decorators import action
 from django.contrib.auth import authenticate, logout, login
 from rest_framework.permissions import IsAuthenticated
-from MBP.permissions import HasModelPermission
-from MBP.models import Role, RoleModelPermission
-from accounts.serializers import UserSerializer, RegisterUserSerializer
+from MBP.models import RoleModelPermission
+from accounts.models import UserRole
+from accounts.serializers import UserSerializer, RegisterUserSerializer, UserRoleSerializer
 from rest_framework.views import APIView
 from MBP.utils import log_audit
 from MBP.views import ProtectedModelViewSet
@@ -17,62 +16,23 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.throttling import UserRateThrottle
 
 
-
 class UserViewSet(ProtectedModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
     model_name = 'User'
     lookup_field = 'slug'
-
-    def get_permissions(self):
-        if self.request.user.is_superuser:
-            return [IsAuthenticated()]
-
-        self.permission_code = {
-            'create': 'c',
-            'update': 'u',
-            'partial_update': 'u',
-            'destroy': 'd',
-        }.get(self.action, 'r')
-
-        return [HasModelPermission()]
-
+    
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser:
             return User.objects.all().order_by('-date_joined')
         return User.objects.filter(created_by=user).order_by('-date_joined')
 
-    @action(detail=True, methods=['patch'], url_path='assign-role', permission_classes=[HasModelPermission])
-    def assign_role(self, request, slug=None):
-        try:
-            user = self.get_object()
-
-            role_slug = request.data.get('role_slug')
-            if not role_slug:
-                return Response({"error": "role_slug is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-            role = Role.objects.get(slug=role_slug)
-
-            user.role = role
-            user.is_active = True
-            user._request_user = request.user
-            user.save()
-
-            log_audit(
-                request=request,
-                action='update',
-                model_name='User',
-                object_id=user.pk,
-                details=f"Assigned role '{role.name}' and activated user {user.email}",
-                new_data={"role": role.name, "is_active": True}
-            )
-
-            return Response({"message": "Role assigned and user activated."}, status=status.HTTP_200_OK)
-
-        except Role.DoesNotExist:
-            return Response({"error": "Role not found."}, status=status.HTTP_404_NOT_FOUND)
-
+class UserRoleViewSet(ProtectedModelViewSet):
+    queryset = UserRole.objects.select_related('user', 'role').all().order_by('-assigned_at')
+    serializer_class = UserRoleSerializer
+    model_name = 'UserRole'
+    lookup_field = 'slug'
 
 class RegisterView(APIView):
     permission_classes = []
@@ -81,7 +41,6 @@ class RegisterView(APIView):
         serializer = RegisterUserSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            
             log_audit(
                 request=request,
                 action='create',
@@ -90,7 +49,6 @@ class RegisterView(APIView):
                 details=f"User {user.email} registered manually.",
                 new_data=serializer.data
             )
-            
             return Response({
                 "message": "Registered successfully. Awaiting admin approval.",
                 "user_id": user.id
@@ -121,17 +79,18 @@ class LoginView(APIView):
                 object_id=user.id,
                 details=f"{user.email} logged in"
             )
-            # Fetch accessible models for this user
-            role = user.role
+
+            role_name = None
             accessible_models = []
-            if role:
+            if hasattr(user, 'user_role') and user.user_role.role:
+                role = user.user_role.role
+                role_name = role.name
                 role_perms = RoleModelPermission.objects.filter(role=role)
                 for rp in role_perms:
-                    model_info = {
+                    accessible_models.append({
                         "model_name": rp.model.name,
-                        "permission": rp.permission_type.code  # 'c', 'r', 'u', 'd'
-                    }
-                    accessible_models.append(model_info)
+                        "permission": rp.permission_type.code
+                    })
 
             return Response({
                 "refresh": str(refresh),
@@ -140,23 +99,42 @@ class LoginView(APIView):
                     "id": str(user.id),
                     "email": user.email,
                     "full_name": user.full_name,
-                    "role": user.role.name if user.role else None,
+                    "role": role_name,
                     "permissions": accessible_models
                 }
             }, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
-        
+
+        return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+from rest_framework_simplejwt.tokens import TokenError, AccessToken
+from django.core.cache import cache
+import datetime
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        refresh_token = request.data.get("refresh")
+        access_token = request.headers.get("Authorization", "").split(" ")[1]  # Extract access token
+
+        if not refresh_token:
+            return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            refresh_token = request.data["refresh"]
+            # Blacklist refresh token
             token = RefreshToken(refresh_token)
             token.blacklist()
-            
+
+            # Blacklist access token by adding its jti to cache
+            access = AccessToken(access_token)
+            jti = access['jti']
+            exp = access['exp']
+
+            # Calculate expiry time from token
+            expiry_time = datetime.datetime.fromtimestamp(exp) - datetime.datetime.now()
+            cache.set(f"blacklisted_{jti}", True, timeout=expiry_time.total_seconds())
+
             log_audit(
                 request=request,
                 action='logout',
@@ -164,10 +142,12 @@ class LogoutView(APIView):
                 object_id=request.user.id,
                 details=f"{request.user.email} logged out."
             )
-            
+
             return Response({"message": "Logged out successfully."}, status=status.HTTP_205_RESET_CONTENT)
-        except Exception as e:
-            return Response({"error": "Invalid token or already blacklisted."}, status=status.HTTP_400_BAD_REQUEST)
+
+        except TokenError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 

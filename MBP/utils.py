@@ -39,7 +39,7 @@ def get_user_agent(request):
     return request.META.get('HTTP_USER_AGENT', '')
 
 def log_audit(request, action, model_name=None, object_id=None, details=None, old_data=None, new_data=None):
-    print(f"3.1 ✅ Calling log_audit_from_user for {model_name}, action: {action}")
+    print(f"3.1 Calling log_audit_from_user for {model_name}, action: {action}")
     try:
         AuditLog.objects.create(
             user=request.user if request and request.user.is_authenticated else None,
@@ -53,10 +53,10 @@ def log_audit(request, action, model_name=None, object_id=None, details=None, ol
             user_agent=get_user_agent(request) if request else None
         )
     except Exception as e:
-        print("❌ Failed to create audit log:", e)
+        print("Failed to create audit log:", e)
 
 def log_audit_from_user(user, action, model_name=None, object_id=None, details=None, old_data=None, new_data=None):
-    print(f"3.2 ✅ Calling log_audit_from_user for {model_name}, action: {action}")
+    print(f"3.2 Calling log_audit_from_user for {model_name}, action: {action}")
     try:
         AuditLog.objects.create(
             user=user,
@@ -68,4 +68,4 @@ def log_audit_from_user(user, action, model_name=None, object_id=None, details=N
             new_data=new_data
         )
     except Exception as e:
-        print("❌ Failed to create audit log:", e)
+        print("Failed to create audit log:", e)
