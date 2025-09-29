@@ -1,1 +1,1 @@
-web: gunicorn REMS.wsgi
+web: gunicorn HMS.wsgi

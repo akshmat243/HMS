@@ -3,26 +3,8 @@ from django.utils.text import slugify
 import uuid
 from django.conf import settings
 
-class RoleCategory(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=50, unique=True)
-    slug = models.SlugField(unique=True, blank=True)
-    description = models.TextField(blank=True)
-    # created_at = models.DateTimeField(auto_now_add=True)
-    # updated_at = models.DateTimeField(auto_now=True)
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return self.name
-
-
 class Role(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    category = models.ForeignKey(RoleCategory, on_delete=models.CASCADE, related_name="roles", null=True, blank=True)
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
@@ -34,7 +16,6 @@ class Role(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class AppModel(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -44,6 +25,7 @@ class AppModel(models.Model):
     description = models.TextField(blank=True)
     app_label = models.CharField(max_length=100)
 
+
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.name)
@@ -52,21 +34,19 @@ class AppModel(models.Model):
     def __str__(self):
         return self.name
 
-
 class PermissionType(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=20)
     slug = models.SlugField(unique=True, blank=True)
     code = models.CharField(max_length=1)  # c, r, u, d
+    
+    def __str__(self):
+        return self.name
 
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.name)
         super().save(*args, **kwargs)
-
-    def __str__(self):
-        return self.name
-
 
 class RoleModelPermission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -87,10 +67,13 @@ class RoleModelPermission(models.Model):
             base_slug = slugify(base)
             unique_slug = base_slug
             counter = 1
+
             while RoleModelPermission.objects.filter(slug=unique_slug).exclude(pk=self.pk).exists():
                 unique_slug = f"{base_slug}-{counter}"
                 counter += 1
+
             self.slug = unique_slug
+
         super().save(*args, **kwargs)
 
 

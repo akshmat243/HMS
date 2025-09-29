@@ -1,87 +1,102 @@
 from rest_framework import serializers
-from django.core.exceptions import ValidationError
-from .models import User, Role, UserRole
+from MBP.models import Role
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 
 class RegisterUserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'password']
+        fields = ['id', 'email', 'full_name', 'phone', 'password']
         read_only_fields = ['id']
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("A user with this phone number already exists.")
+        return value
 
     def create(self, validated_data):
         password = validated_data.pop('password')
         user = User(**validated_data)
         user.set_password(password)
         user.is_active = False
+        user.is_email_verified = False
+        user.is_phone_verified = True
+        user.role = Role.objects.get(name="Customer")
+        user.created_by = None
         user.save()
         return user
 
 
-# User Serializer
 class UserSerializer(serializers.ModelSerializer):
+    
+    role = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Role.objects.all()
+    )
+    
+    password = serializers.CharField(write_only=True, required=False)
+    role_slug = serializers.SlugField(write_only=True, required=False)
+    role = serializers.SerializerMethodField(read_only=True)
     created_by = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'full_name', 'slug', 'password',
-            'is_active', 'date_joined', 'created_by'
+            'role_slug', 'role', 'is_active', 'date_joined', 'created_by'
         ]
-        read_only_fields = ['id', 'slug', 'date_joined', 'created_by']
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': False}
-        }
+        read_only_fields = ['id', 'date_joined', 'created_by', 'role']
+
+    def get_role(self, obj):
+        return obj.role.name if obj.role else None
 
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
+        role_slug = validated_data.pop('role_slug', None)
+
+        role = None
+        if role_slug:
+            try:
+                role = Role.objects.get(slug=role_slug)
+            except Role.DoesNotExist:
+                raise serializers.ValidationError({"role_slug": "Invalid role slug."})
+
         user = User(**validated_data)
         if password:
             user.set_password(password)
+        if role:
+            user.role = role
         user.is_active = True
         user.save()
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
+        role_slug = validated_data.pop('role_slug', None)
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+
         if password:
             instance.set_password(password)
+
+        if role_slug:
+            try:
+                role = Role.objects.get(slug=role_slug)
+                instance.role = role
+            except Role.DoesNotExist:
+                raise serializers.ValidationError({"role_slug": "Invalid role slug."})
+
         instance.save()
         return instance
-
-
-
-class UserRoleSerializer(serializers.ModelSerializer):
-    user = serializers.SlugRelatedField(slug_field='slug', queryset=User.objects.all())
-    role = serializers.SlugRelatedField(slug_field='slug', queryset=Role.objects.all())
-    assigned_by = serializers.SlugRelatedField(slug_field='slug', read_only=True)
-
-    class Meta:
-        model = UserRole
-        fields = ['id', 'user', 'role', 'assigned_at', 'assigned_by']
-        read_only_fields = ['id', 'assigned_at', 'assigned_by']
-
-    def validate(self, data):
-        # Check if user already has a role
-        if UserRole.objects.filter(user=data['user']).exists():
-            raise serializers.ValidationError({
-                'user': 'This user already has a role assigned.'
-            })
-        return data
-
-    def create(self, validated_data):
-        request = self.context.get('request')
-        assigned_by = request.user if request else None
-
-        try:
-            user_role = UserRole.objects.create(assigned_by=assigned_by, **validated_data)
-            return user_role
-        except ValidationError as e:
-            raise serializers.ValidationError({'error': str(e)})

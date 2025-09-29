@@ -2,9 +2,11 @@ from .models import AuditLog
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models.fields.files import FileField, ImageField
 from django.db.models import Model
+from decimal import Decimal
 import json
 import uuid
 import datetime
+
 
 def serialize_instance(instance):
     data = {}
@@ -18,6 +20,10 @@ def serialize_instance(instance):
         elif isinstance(value, (uuid.UUID, datetime.datetime, datetime.date)):
             data[field_name] = str(value)
 
+        elif isinstance(value, Decimal):
+            # Convert Decimal to float for JSON serialization
+            data[field_name] = float(value)
+
         elif isinstance(value, Model):
             data[field_name] = str(value)
 
@@ -29,6 +35,7 @@ def serialize_instance(instance):
                 data[field_name] = str(value)
 
     return data
+
 
 
 def get_client_ip(request):
@@ -68,4 +75,4 @@ def log_audit_from_user(user, action, model_name=None, object_id=None, details=N
             new_data=new_data
         )
     except Exception as e:
-        print("Failed to create audit log:", e)
+        print(" Failed to create audit log:", e)

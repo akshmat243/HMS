@@ -1,8 +1,7 @@
 from rest_framework import viewsets
 from .permissions import HasModelPermission
-from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog, RoleCategory
+from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog
 from .serializers import (
-    RoleCategorySerializer,
     RoleSerializer,
     AppModelSerializer,
     PermissionTypeSerializer,
@@ -48,13 +47,6 @@ class ProtectedModelViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         instance._request_user = self.request.user
         instance.delete()
-
-
-class RoleCategoryViewSet(ProtectedModelViewSet):
-    queryset = RoleCategory.objects.all()
-    serializer_class = RoleCategorySerializer
-    model_name = 'RoleCategory'
-    lookup_field = 'slug'
 
 
 class RoleViewSet(ProtectedModelViewSet):
