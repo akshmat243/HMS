@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest
 
 
 class HotelSerializer(serializers.ModelSerializer):
@@ -67,9 +67,26 @@ class RoomSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This room number already exists in the hotel.")
         return data
 
+from datetime import date
+
+class GuestSerializer(serializers.ModelSerializer):
+    age = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Guest
+        fields = '__all__'  # includes age dynamically
+
+    def get_age(self, obj):
+        if hasattr(obj, 'date_of_birth') and obj.date_of_birth:
+            today = date.today()
+            return today.year - obj.date_of_birth.year - (
+                (today.month, today.day) < (obj.date_of_birth.month, obj.date_of_birth.day)
+            )
+        return None
+
+
 
 class BookingSerializer(serializers.ModelSerializer):
-    
     hotel = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Hotel.objects.all()
@@ -79,20 +96,23 @@ class BookingSerializer(serializers.ModelSerializer):
         queryset=Room.objects.all()
     )
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    
+    guests = GuestSerializer(many=True, required=True)
+
     class Meta:
         model = Booking
         fields = '__all__'
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = ['created_at', 'booking_code', 'slug']
 
     def validate(self, data):
-        room = data.get('room', self.instance.room if self.instance else None)
         check_in = data.get('check_in', self.instance.check_in if self.instance else None)
         check_out = data.get('check_out', self.instance.check_out if self.instance else None)
+        room = data.get('room', self.instance.room if self.instance else None)
 
+        # ✅ Check date order
         if check_in and check_out and check_in >= check_out:
             raise serializers.ValidationError("Check-out must be after check-in.")
 
+        # ✅ Prevent overlapping bookings
         overlapping = Booking.objects.filter(
             room=room,
             check_out__gt=check_in,
@@ -104,6 +124,27 @@ class BookingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This room is already booked for the selected dates.")
 
         return data
+
+    def create(self, validated_data):
+        guests_data = validated_data.pop('guests', [])
+        booking = Booking.objects.create(**validated_data)
+        for guest in guests_data:
+            Guest.objects.create(booking=booking, **guest)
+        return booking
+
+    def update(self, instance, validated_data):
+        guests_data = validated_data.pop('guests', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if guests_data is not None:
+            instance.guests.all().delete()  # clear old guests
+            for guest in guests_data:
+                Guest.objects.create(booking=instance, **guest)
+
+        return instance
+
 
 
 class RoomServiceRequestSerializer(serializers.ModelSerializer):

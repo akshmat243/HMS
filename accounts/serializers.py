@@ -50,7 +50,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'full_name', 'slug', 'password',
+            'id', 'email', 'full_name', 'slug', 'password', 'phone',
             'role_slug', 'role', 'is_active', 'date_joined', 'created_by'
         ]
         read_only_fields = ['id', 'date_joined', 'created_by', 'role']
@@ -62,6 +62,9 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.created_by.email if obj.created_by else None
 
     def create(self, validated_data):
+        request = self.context.get("request")  # ✅ Get the request object
+        creator = getattr(request, "user", None)  # current logged-in user
+        
         password = validated_data.pop('password', None)
         role_slug = validated_data.pop('role_slug', None)
 
@@ -73,6 +76,9 @@ class UserSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
         user = User(**validated_data)
+        if creator and creator.is_authenticated:
+            user.created_by = creator
+            
         if password:
             user.set_password(password)
         if role:

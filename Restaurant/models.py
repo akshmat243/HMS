@@ -64,6 +64,7 @@ class Table(models.Model):
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='tables')
     number = models.CharField(max_length=10)
     slug = models.SlugField(unique=True, blank=True)
+    table_code = models.CharField(max_length=10, unique=True, blank=True)
     capacity = models.PositiveIntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
 
@@ -71,6 +72,15 @@ class Table(models.Model):
         return f"Table {self.number} - {self.hotel.name}"
 
     def save(self, *args, **kwargs):
+        if not self.table_code:
+            last_table = Table.objects.order_by('-table_code').first()
+            if last_table and last_table.table_code.startswith('T'):
+                last_number = int(last_table.table_code[1:])
+                new_number = last_number + 1
+            else:
+                new_number = 1
+            self.table_code = f"T{new_number:02d}"  # e.g., T01, T02, T10
+
         if not self.slug:
             base_slug = slugify(f"{self.hotel.name}-{self.number}")
             counter = 1
@@ -79,6 +89,7 @@ class Table(models.Model):
                 counter += 1
                 new_slug = f"{base_slug}-{counter}"
             self.slug = new_slug
+
         super().save(*args, **kwargs)
 
 
@@ -88,30 +99,33 @@ class RestaurantOrder(models.Model):
         ('preparing', 'Preparing'),
         ('served', 'Served'),
         ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    slug = models.SlugField(unique=True, blank=True)  # New field
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='restaurant_orders')
-    table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, related_name='orders')
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    order_time = models.DateTimeField(auto_now_add=True)
+    slug = models.SlugField(unique=True, blank=True)
+    table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='restaurant_orders')
+    guest_name = models.CharField(max_length=100)
+    guest_phone = models.CharField(max_length=15)
+    remarks = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    order_time = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
-        return f"Order #{self.id} - Table {self.table.number if self.table else 'N/A'}"
+        return f"Order {self.slug or self.id} - {self.guest_name}"
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            table_number = self.table.number if self.table else 'table'
-            base = f"{table_number}-{uuid.uuid4().hex[:6]}"
-            self.slug = slugify(base)
+            base_slug = slugify(f"order-{uuid.uuid4().hex[:6]}")
+            self.slug = base_slug
         super().save(*args, **kwargs)
 
 
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    slug = models.SlugField(unique=True, blank=True)  # New slug field
+    slug = models.SlugField(unique=True, blank=True)
     order = models.ForeignKey(RestaurantOrder, on_delete=models.CASCADE, related_name='order_items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)

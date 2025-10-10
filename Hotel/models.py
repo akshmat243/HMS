@@ -146,6 +146,50 @@ class Booking(models.Model):
             self.slug = slugify(self.booking_code)
 
         super().save(*args, **kwargs)
+        
+        
+class Guest(models.Model):
+    GENDER_CHOICES = [
+        ('male', 'Male'),
+        ('female', 'Female'),
+        ('other', 'Other'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey('Booking', on_delete=models.CASCADE, related_name='guests')
+    slug = models.SlugField(unique=True, blank=True)
+
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
+    id_proof_type = models.CharField(max_length=50, blank=True, null=True)
+    id_proof_number = models.CharField(max_length=50, blank=True, null=True)
+    special_request = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name or ''} ({self.booking.booking_code})".strip()
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(f"{self.first_name}-{self.last_name or ''}-{self.booking.booking_code}")
+            counter = 1
+            new_slug = base_slug
+            while Guest.objects.filter(slug=new_slug).exists():
+                counter += 1
+                new_slug = f"{base_slug}-{counter}"
+            self.slug = new_slug
+        super().save(*args, **kwargs)
+    
+    
 
 class RoomServiceRequest(models.Model):
     SERVICE_CHOICES = [

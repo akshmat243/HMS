@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'Marketing',
     'accounts',
     'MBP',
+    'staff',
 ]
 
 MIDDLEWARE = [

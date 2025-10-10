@@ -50,6 +50,7 @@ urlpatterns = [
     path('', include('Marketing.urls')),
     path('', include('Restaurant.urls')),
     path('', include('Reviews.urls')),
+    path('', include('staff.urls')),
     
     
     

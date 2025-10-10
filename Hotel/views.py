@@ -2,7 +2,7 @@ from MBP.views import ProtectedModelViewSet
 from datetime import date, datetime
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Count, Q
+from django.db.models import Count, Q, F, Avg, Sum
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest
 from .serializers import (
     HotelSerializer,
@@ -41,6 +41,42 @@ class RoomViewSet(ProtectedModelViewSet):
     serializer_class = RoomSerializer
     model_name = 'Room'
     lookup_field = 'slug'
+    
+    @action(detail=False, methods=['get'], url_path='dashboard-summary')
+    def dashboard_summary(self, request):
+        """
+        Returns total count of rooms by status for dashboard cards.
+        Example:
+        {
+          "available": 10,
+          "occupied": 5,
+          "reserved": 3,
+          "maintenance": 2,
+          "total_rooms": 20
+        }
+        """
+
+        hotel_id = request.query_params.get('hotel')
+        rooms = Room.objects.all()
+
+        if hotel_id:
+            rooms = rooms.filter(hotel_id=hotel_id)
+
+        # Count per status
+        status_counts = (
+            rooms.values('status')
+            .annotate(total=Count('id'))
+        )
+
+        data = {status['status']: status['total'] for status in status_counts}
+
+        # Ensure all statuses are present (even if 0)
+        for key in ['available', 'occupied', 'reserved', 'maintenance']:
+            data.setdefault(key, 0)
+
+        data['total_rooms'] = sum(data.values())
+
+        return Response(data)
     
     @action(detail=False, methods=['get'], url_path='occupancy-summary')
     def occupancy_summary(self, request):
@@ -125,10 +161,15 @@ class RoomViewSet(ProtectedModelViewSet):
 
 
 class BookingViewSet(ProtectedModelViewSet):
-    queryset = Booking.objects.all()
+    queryset = Booking.objects.all().select_related('hotel', 'room', 'user').prefetch_related('guests')
     serializer_class = BookingSerializer
     model_name = 'Booking'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return Booking.objects.all()
+        return Booking.objects.filter(user=self.request.user)
     
     @action(detail=False, methods=['get'], url_path='today-summary')
     def today_summary(self, request):
@@ -155,4 +196,3 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
     serializer_class = RoomServiceRequestSerializer
     model_name = 'RoomServiceRequest'
     lookup_field = 'slug'
-

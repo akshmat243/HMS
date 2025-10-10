@@ -3,6 +3,8 @@ from .models import (
     MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem
 )
 from Hotel.models import Hotel
+from django.core.validators import RegexValidator
+
 
 
 class MenuCategorySerializer(serializers.ModelSerializer):
@@ -74,7 +76,6 @@ class TableSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Table with this number already exists in this hotel.")
         return value
 
-
 class OrderItemSerializer(serializers.ModelSerializer):
     menu_item = serializers.SlugRelatedField(
         slug_field='slug',
@@ -83,39 +84,84 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrderItem
-        fields = '__all__'
+        fields = ['slug', 'menu_item', 'quantity', 'price']
+        read_only_fields = ['slug']
 
-
+    def validate(self, data):
+        """Ensure quantity and price are valid."""
+        if data.get('quantity', 0) <= 0:
+            raise serializers.ValidationError({"quantity": "Quantity must be greater than zero."})
+        if data.get('price', 0) <= 0:
+            raise serializers.ValidationError({"price": "Price must be greater than zero."})
+        return data
+    
+    
 class RestaurantOrderSerializer(serializers.ModelSerializer):
     table = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Table.objects.all(),
         allow_null=True
     )
+    hotel = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Hotel.objects.all()
+    )
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     order_items = OrderItemSerializer(many=True, required=False)
 
+    guest_phone = serializers.CharField(
+        max_length=15,
+        validators=[RegexValidator(r'^\+?\d{7,15}$', message="Enter a valid phone number.")]
+    )
+
     class Meta:
         model = RestaurantOrder
-        fields = '__all__'
+        fields = [
+            'slug',
+            'hotel',
+            'table',
+            'user',
+            'guest_name',
+            'guest_phone',
+            'remarks',
+            'status',
+            'order_time',
+            'completed_at',
+            'order_items',
+        ]
+        read_only_fields = ['slug', 'order_time', 'completed_at']
+
+    def validate(self, data):
+        """Custom validation to ensure required guest details."""
+        if not data.get('guest_name'):
+            raise serializers.ValidationError({"guest_name": "Guest name is required."})
+        if not data.get('guest_phone'):
+            raise serializers.ValidationError({"guest_phone": "Guest phone is required."})
+        return data
 
     def create(self, validated_data):
+        """Create restaurant order with nested items."""
         items_data = validated_data.pop('order_items', [])
         order = RestaurantOrder.objects.create(**validated_data)
-        for item in items_data:
-            OrderItem.objects.create(order=order, **item)
+
+        for item_data in items_data:
+            OrderItem.objects.create(order=order, **item_data)
+
         return order
 
     def update(self, instance, validated_data):
+        """Update restaurant order and its nested items."""
         items_data = validated_data.pop('order_items', None)
 
+        # Update basic order fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
+        # Update order items (replace all if passed)
         if items_data is not None:
             instance.order_items.all().delete()
-            for item in items_data:
-                OrderItem.objects.create(order=instance, **item)
+            for item_data in items_data:
+                OrderItem.objects.create(order=instance, **item_data)
 
         return instance

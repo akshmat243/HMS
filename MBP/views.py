@@ -10,6 +10,16 @@ from .serializers import (
 )
 from .utils import serialize_instance
 from django.db.models.signals import post_save
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import status
+from django.db.models import Q
+import psutil
+from django.utils.timesince import timesince
+from django.utils import timezone
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class ProtectedModelViewSet(viewsets.ModelViewSet):
@@ -78,19 +88,78 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only audit logs view with role-based data filtering.
+    - Superusers → all logs
+    - Admins → logs of users they created
+    - Others → only their own logs
+    Supports filters: ?user=email&action=create
+    """
     queryset = AuditLog.objects.all().order_by('-timestamp')
     serializer_class = AuditLogSerializer
     model_name = 'AuditLog'
     permission_classes = [HasModelPermission]
-    permission_code = 'r'  # read-only
+    permission_code = 'r'
 
     def get_queryset(self):
+        user = self.request.user
         queryset = super().get_queryset()
-        user_email = self.request.query_params.get('user')
-        action = self.request.query_params.get('action')
+
+        if not user.is_authenticated:
+            return queryset.none()
+
+        # Superusers see everything
+        if user.is_superuser:
+            return queryset
+
+        # Normal users see their own logs and logs of users they created
+        created_users = user.created_users.all()
+        queryset = queryset.filter(Q(user=user) | Q(user__in=created_users))
+
+        # Optional filters
+        user_email = self.request.query_params.get("user")
+        action = self.request.query_params.get("action")
 
         if user_email:
             queryset = queryset.filter(user__email__icontains=user_email)
         if action:
-            queryset = queryset.filter(action=action)
+            queryset = queryset.filter(action__iexact=action)
+
         return queryset
+
+    @action(detail=False, methods=["get"], url_path="recent")
+    def recent_logs(self, request):
+        """
+        Returns 5 most recent activities with "time ago" format.
+        """
+        logs = self.get_queryset()[:5]
+        data = [
+            {
+                "action": log.action,
+                "details": log.details or "",
+                "time_ago": timesince(log.timestamp, timezone.now()) + " ago",
+                "user": log.user.full_name if log.user else None,
+            }
+            for log in logs
+        ]
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="system-health", permission_classes=[])
+    def system_health(self, request):
+        """
+        Returns current system health information for dashboard display.
+        """
+        cpu_usage = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage("/")
+
+        health_data = {
+            "server_status": "Online" if cpu_usage < 90 else "High Load",
+            "database": "Healthy",  # Optionally, add a DB connection check
+            "ai_services": "Active",  # For AI/ML modules, can be checked via API ping
+            "uptime": timesince(timezone.now() - timezone.timedelta(seconds=psutil.boot_time())),
+            "cpu_usage": f"{cpu_usage}%",
+            "memory_usage": f"{memory.percent}%",
+            "disk_usage": f"{disk.percent}%",
+        }
+        return Response(health_data, status=status.HTTP_200_OK)
