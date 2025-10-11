@@ -1,6 +1,6 @@
 from MBP.views import ProtectedModelViewSet
-from .models import Staff, Attendance
-from .serializers import StaffSerializer, AttendanceSerializer
+from .models import Staff, Attendance, Payroll
+from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Count, Q, F, Avg, Sum
@@ -12,7 +12,7 @@ class StaffViewSet(ProtectedModelViewSet):
     """
     queryset = Staff.objects.all().select_related('user')
     serializer_class = StaffSerializer
-    model_name = 'staff'
+    model_name = 'Staff'
 
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
@@ -49,7 +49,7 @@ class AttendanceViewSet(ProtectedModelViewSet):
     """
     queryset = Attendance.objects.all().select_related('staff')
     serializer_class = AttendanceSerializer
-    model_name = 'attendance'
+    model_name = 'Attendance'
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -61,8 +61,8 @@ class PayrollViewSet(ProtectedModelViewSet):
     """
     View total payrolls grouped by month or by hotel.
     """
-    model_name = 'staff'
-    # serializer_class = PayrollSerializer
+    model_name = 'staff-payroll'
+    serializer_class = PayrollSerializer
     
 
     @action(detail=False, methods=['get'], url_path='monthly-summary')
@@ -80,3 +80,32 @@ class PayrollViewSet(ProtectedModelViewSet):
             "avg_salary": round(avg_salary, 2),
             "staff_count": staffs.count()
         })
+
+from datetime import date
+
+class PayrollViewSet(ProtectedModelViewSet):
+    queryset = Payroll.objects.all().select_related('staff__user')
+    serializer_class = PayrollSerializer
+    model_name = 'Payroll'
+
+    @action(detail=False, methods=['post'], url_path='generate-monthly')
+    def generate_monthly_payroll(self, request):
+        """
+        Generate payroll for all staff for the current month if not already exists.
+        """
+        today = date.today()
+        month, year = today.month, today.year
+        created_count = 0
+
+        for staff in Staff.objects.all():
+            if not Payroll.objects.filter(staff=staff, month=month, year=year).exists():
+                Payroll.objects.create(
+                    staff=staff,
+                    salary_type='attendance_based',
+                    base_salary=staff.monthly_salary,
+                    month=month,
+                    year=year
+                )
+                created_count += 1
+
+        return Response({"message": f"Payroll generated for {created_count} staff members."})
