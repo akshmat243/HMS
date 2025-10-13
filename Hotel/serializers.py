@@ -74,7 +74,8 @@ class GuestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Guest
-        fields = '__all__'  # includes age dynamically
+        exclude = ['booking']  # or: read_only_fields = ['booking']
+        read_only_fields = ['slug', 'created_at']
 
     def get_age(self, obj):
         if hasattr(obj, 'date_of_birth') and obj.date_of_birth:

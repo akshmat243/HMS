@@ -50,7 +50,7 @@ class Staff(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.get_full_name()} - {self.designation or 'Staff'}"
+        return f"{self.user.full_name} - {self.designation or 'Staff'}"
     
     @property
     def performance_score(self):
