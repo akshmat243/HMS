@@ -2,11 +2,11 @@ from MBP.views import ProtectedModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
 )
 from .serializers import (
     MenuCategorySerializer, MenuItemSerializer, TableSerializer,
-    RestaurantOrderSerializer, OrderItemSerializer
+    RestaurantOrderSerializer, OrderItemSerializer, TableReservationSerializer
 )
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
 from datetime import date
@@ -116,3 +116,29 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
             "todays_revenue": float(todays_revenue),
             "avg_wait_time": f"{avg_wait_minutes} min",
         })
+
+class TableReservationViewSet(ProtectedModelViewSet):
+    """
+    Manage Table Reservations.
+    - Superadmin/Admin: can view, create, update, delete all reservations
+    - Staff: can view and manage reservations for their assigned hotel tables only
+    - Public: cannot access unless explicitly allowed
+    """
+    queryset = TableReservation.objects.all().order_by('-created_at')
+    serializer_class = TableReservationSerializer
+    model_name = 'TableReservation'  # required for RoleModelPermission mapping
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # 🧠 Superusers and Admins see all reservations
+        if user.is_superuser or (hasattr(user, "role") and user.role.name.lower() in ["Admin"]):
+            return TableReservation.objects.all().order_by('-created_at')
+
+        # 🧠 Staff linked to a hotel can see only their hotel's table reservations
+        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+            hotel = user.staff_profile.hotel
+            return TableReservation.objects.filter(table__hotel=hotel).order_by('-created_at')
+
+        # 🧠 Other users (like customers) can see their own reservations
+        return TableReservation.objects.filter(email=user.email).order_by('-created_at')

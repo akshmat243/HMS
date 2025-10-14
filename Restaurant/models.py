@@ -139,3 +139,42 @@ class OrderItem(models.Model):
             base = f"{self.menu_item.name}-{uuid.uuid4().hex[:6]}"
             self.slug = slugify(base)
         super().save(*args, **kwargs)
+
+class TableReservation(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name='reservations')
+    slug = models.SlugField(unique=True, blank=True)
+
+    full_name = models.CharField(max_length=150)
+    email = models.EmailField()
+    phone = models.CharField(max_length=20)
+    special_occasion = models.CharField(max_length=100, blank=True, null=True)
+    special_requests = models.TextField(blank=True, null=True)
+
+    reservation_date = models.DateField()
+    reservation_time = models.TimeField()
+    people_count = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.full_name} - {self.table} ({self.reservation_date} {self.reservation_time})"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(f"{self.full_name}-{self.reservation_date}-{self.reservation_time}")
+            counter = 1
+            new_slug = base_slug
+            while TableReservation.objects.filter(slug=new_slug).exists():
+                counter += 1
+                new_slug = f"{base_slug}-{counter}"
+            self.slug = new_slug
+        super().save(*args, **kwargs)

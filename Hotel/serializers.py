@@ -55,6 +55,10 @@ class RoomSerializer(serializers.ModelSerializer):
         model = Room
         fields = '__all__'
         read_only_fields = ['slug']
+        extra_kwargs = {
+            'room_number': {'required': False},
+            'slug': {'required': False}
+        }
 
     def validate(self, data):
         hotel = data.get('hotel', self.instance.hotel if self.instance else None)
@@ -102,7 +106,7 @@ class BookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = '__all__'
-        read_only_fields = ['created_at', 'booking_code', 'slug']
+        read_only_fields = ['created_at', 'booking_code', 'slug', 'check_in_time', 'check_out_time']
 
     def validate(self, data):
         check_in = data.get('check_in', self.instance.check_in if self.instance else None)

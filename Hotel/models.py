@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
 from django.utils.text import slugify
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -70,36 +71,49 @@ class Room(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='rooms')
     room_category = models.ForeignKey(RoomCategory, on_delete=models.SET_NULL, null=True, related_name='rooms')
-    room_number = models.CharField(max_length=20, unique=True, blank=True)
+    room_number = models.CharField(max_length=20, blank=True)
     slug = models.SlugField(unique=True, blank=True)
     floor = models.CharField(max_length=20)
     is_available = models.BooleanField(default=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
 
+    class Meta:
+        unique_together = ('hotel', 'room_number')
+        ordering = ['hotel', 'room_number']
+
     def __str__(self):
         return f"{self.room_number} - {self.hotel.name}"
 
     def save(self, *args, **kwargs):
-        if not self.room_number:
-            count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
-            try:
-                floor_number = int(self.floor)
-                self.room_number = f"R{floor_number}{count:02d}"
-            except ValueError:
-                self.room_number = f"R{self.floor}{count:02d}"
+        # prevent duplicate generation in concurrent saves
+        with transaction.atomic():
+            if not self.room_number:
+                count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
+                try:
+                    floor_number = int(self.floor)
+                    self.room_number = f"R{floor_number}{count:02d}"
+                except ValueError:
+                    self.room_number = f"R{self.floor}{count:02d}"
 
-        if not self.slug:
-            base_slug = slugify(f"{self.hotel.name}-{self.room_number}")
-            slug = base_slug
-            index = 1
-            while Room.objects.filter(slug=slug).exists():
-                slug = f"{base_slug}-{index}"
-                index += 1
-            self.slug = slug
+                # ensure uniqueness in case of race condition
+                while Room.objects.filter(hotel=self.hotel, room_number=self.room_number).exists():
+                    count += 1
+                    try:
+                        floor_number = int(self.floor)
+                        self.room_number = f"R{floor_number}{count:02d}"
+                    except ValueError:
+                        self.room_number = f"R{self.floor}{count:02d}"
 
-        super().save(*args, **kwargs)
+            if not self.slug:
+                base_slug = slugify(f"{self.hotel.name}-{self.room_number}")
+                slug = base_slug
+                index = 1
+                while Room.objects.filter(slug=slug).exists():
+                    slug = f"{base_slug}-{index}"
+                    index += 1
+                self.slug = slug
 
-
+            super().save(*args, **kwargs)
 
 
 class Booking(models.Model):
@@ -128,6 +142,8 @@ class Booking(models.Model):
     guests_count = models.PositiveIntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS, default='unpaid')
+    check_in_time = models.DateTimeField(null=True, blank=True)
+    check_out_time = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

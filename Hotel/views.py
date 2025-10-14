@@ -171,6 +171,61 @@ class BookingViewSet(ProtectedModelViewSet):
             return Booking.objects.all()
         return Booking.objects.filter(user=self.request.user)
     
+    @action(detail=True, methods=['post'], url_path='check-in')
+    def check_in(self, request, slug=None):
+        booking = self.get_object()
+
+        if booking.status not in ['confirmed', 'pending']:
+            return Response(
+                {"error": "Booking cannot be checked in from the current status."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Mark room unavailable
+        booking.room.is_available = False
+        booking.room.save(update_fields=['is_available'])
+
+        # Update booking
+        booking.status = 'checked_in'
+        booking.check_in_time = timezone.now()
+        booking.save(update_fields=['status', 'check_in_time'])
+
+        return Response(
+            {
+                "message": f"{booking.booking_code} checked in successfully.",
+                "check_in_time": booking.check_in_time,
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # ✅ Check Out Endpoint
+    @action(detail=True, methods=['post'], url_path='check-out')
+    def check_out(self, request, slug=None):
+        booking = self.get_object()
+
+        if booking.status != 'checked_in':
+            return Response(
+                {"error": "Only checked-in bookings can be checked out."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Mark room available again
+        booking.room.is_available = True
+        booking.room.save(update_fields=['is_available'])
+
+        # Update booking
+        booking.status = 'checked_out'
+        booking.check_out_time = timezone.now()
+        booking.save(update_fields=['status', 'check_out_time'])
+
+        return Response(
+            {
+                "message": f"{booking.booking_code} checked out successfully.",
+                "check_out_time": booking.check_out_time,
+            },
+            status=status.HTTP_200_OK
+        )        
+    
     @action(detail=False, methods=['get'], url_path='today-summary')
     def today_summary(self, request):
         today = date.today()

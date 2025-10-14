@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
 )
 from Hotel.models import Hotel
 from django.core.validators import RegexValidator
@@ -165,3 +165,31 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
                 OrderItem.objects.create(order=instance, **item_data)
 
         return instance
+
+class TableReservationSerializer(serializers.ModelSerializer):
+    table = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Table.objects.all()
+    )
+
+    class Meta:
+        model = TableReservation
+        fields = '__all__'
+        read_only_fields = ['slug', 'created_at', 'status']
+
+    def validate(self, data):
+        table = data.get('table')
+        date = data.get('reservation_date')
+        time = data.get('reservation_time')
+
+        # Check for overlapping reservations
+        existing = TableReservation.objects.filter(
+            table=table,
+            reservation_date=date,
+            reservation_time=time,
+            status__in=['pending', 'confirmed']
+        )
+        if existing.exists():
+            raise serializers.ValidationError("This table is already reserved at the selected time.")
+
+        return data
