@@ -61,14 +61,13 @@ class RoomSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, data):
-        hotel = data.get('hotel', self.instance.hotel if self.instance else None)
-        number = data.get('room_number', self.instance.room_number if self.instance else None)
-
-        qs = Room.objects.filter(hotel=hotel, room_number=number)
-        if self.instance:
-            qs = qs.exclude(id=self.instance.id)
-        if qs.exists():
-            raise serializers.ValidationError("This room number already exists in the hotel.")
+        """
+        Validate only hotel and floor; room_number is auto-generated.
+        """
+        if not data.get('hotel') and not getattr(self.instance, 'hotel', None):
+            raise serializers.ValidationError({"hotel": "Hotel is required."})
+        if not data.get('floor') and not getattr(self.instance, 'floor', None):
+            raise serializers.ValidationError({"floor": "Floor is required."})
         return data
 
 from datetime import date
