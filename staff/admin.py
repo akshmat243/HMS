@@ -1,6 +1,6 @@
 # staff/admin.py
 from django.contrib import admin
-from .models import Staff, Attendance, Payroll
+from .models import Staff, Attendance, Payroll, Leave
 from django.utils.html import format_html
 from decimal import Decimal
 
@@ -29,7 +29,7 @@ class StaffAdmin(admin.ModelAdmin):
 class AttendanceAdmin(admin.ModelAdmin):
     list_display = ('staff', 'date', 'status', 'check_in', 'check_out', 'remarks')
     list_filter = ('status', 'date')
-    search_fields = ('staff__user__username', 'staff__user__first_name', 'staff__user__last_name')
+    search_fields = ('staff__user__full_name',)
     readonly_fields = ('id',)
     ordering = ('-date',)
 
@@ -59,3 +59,22 @@ class PayrollAdmin(admin.ModelAdmin):
             payroll.total_salary = payroll.calculate_salary()
             payroll.save()
         self.message_user(request, f"Recalculated {queryset.count()} payroll(s).")
+
+@admin.register(Leave)
+class LeaveAdmin(admin.ModelAdmin):
+    list_display = ('staff', 'start_date', 'end_date', 'status', 'approved_by', 'created_at')
+    list_filter = ('status', 'start_date', 'end_date')
+    search_fields = ('staff__user__full_name', 'reason', 'approved_by__full_name')
+    readonly_fields = ('slug', 'created_at', 'approved_by')
+
+    actions = ['approve_leaves', 'reject_leaves']
+
+    @admin.action(description="Approve selected leaves")
+    def approve_leaves(self, request, queryset):
+        updated = queryset.update(status='approved', approved_by=request.user)
+        self.message_user(request, f"Approved {updated} leave(s).")
+
+    @admin.action(description="Reject selected leaves")
+    def reject_leaves(self, request, queryset):
+        updated = queryset.update(status='rejected', approved_by=request.user)
+        self.message_user(request, f"Rejected {updated} leave(s).")

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Staff, Attendance, Payroll
+from .models import Staff, Attendance, Payroll, Leave
 from datetime import time
 from django.contrib.auth import get_user_model
 from Hotel.models import Hotel
@@ -136,6 +136,8 @@ class StaffSerializer(serializers.ModelSerializer):
 
         instance.save()
         return instance
+
+
 class PayrollSerializer(serializers.ModelSerializer):
     staff_name = serializers.CharField(source='staff.user.get_full_name', read_only=True)
 
@@ -157,3 +159,33 @@ class PayrollSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"year": "Invalid year."})
 
         return attrs
+    
+class LeaveSerializer(serializers.ModelSerializer):
+    staff_slug = serializers.SlugRelatedField(
+        source='staff',
+        slug_field='slug',
+        queryset=Staff.objects.all(),
+        write_only=True,
+        required=False
+    )
+    staff_name = serializers.CharField(source='staff.user.get_full_name', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True)
+
+    class Meta:
+        model = Leave
+        fields = [
+            'id', 'slug', 'staff_slug', 'staff_name',
+            'start_date', 'end_date', 'reason',
+            'status', 'approved_by_name', 'created_at'
+        ]
+        read_only_fields = ['slug', 'status', 'approved_by_name', 'created_at']
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        staff = validated_data.pop('staff', None)
+        if not staff and hasattr(request.user, 'staff_profile'):
+            staff = request.user.staff_profile
+        elif not staff:
+            raise serializers.ValidationError({"staff": "Staff profile not found."})
+        validated_data['staff'] = staff
+        return super().create(validated_data)

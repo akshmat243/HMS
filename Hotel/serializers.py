@@ -56,8 +56,8 @@ class RoomSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['slug']
         extra_kwargs = {
-            'room_number': {'required': False},
-            'slug': {'required': False}
+            'room_number': {'required': False, 'read_only': True},
+            'slug': {'required': False, 'read_only': True},
         }
 
     def validate(self, data):
