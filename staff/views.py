@@ -69,7 +69,7 @@ class AttendanceViewSet(ProtectedModelViewSet):
         if attendance.check_in:
             return Response({"message": "Already checked in for today."}, status=status.HTTP_200_OK)
 
-        attendance.check_in = timezone.localtime().time()
+        attendance.check_in = timezone.localtime().time()  # ✅ FIXED
         attendance.status = 'present'
         attendance.save()
 
@@ -96,10 +96,10 @@ class AttendanceViewSet(ProtectedModelViewSet):
         if attendance.check_out:
             return Response({"message": "Already checked out for today."}, status=status.HTTP_200_OK)
 
-        attendance.check_out = timezone.localtime().time()
+        attendance.check_out = timezone.localtime().time()  # ✅ FIXED
         attendance.save()
 
-        duration = attendance.work_duration or 0
+        duration = attendance.work_duration if hasattr(attendance, 'work_duration') else 0
         message = f"Checked out successfully. Worked for {duration} hours."
 
         return Response({

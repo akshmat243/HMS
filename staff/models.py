@@ -2,10 +2,9 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.utils.text import slugify
-from django.utils import timezone
 from decimal import Decimal
 from Hotel.models import Hotel
-from datetime import datetime
+from datetime import datetime, date
 
 User = settings.AUTH_USER_MODEL
 
@@ -21,7 +20,7 @@ class Staff(models.Model):
 
     profile_image = models.ImageField(upload_to='staff_profiles/', blank=True, null=True)
 
-    joining_date = models.DateField(default=timezone.now)
+    joining_date = models.DateField()
     performance_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
 
     # 🕒 Shift details
@@ -55,11 +54,7 @@ class Staff(models.Model):
         return f"{self.user.full_name} - {self.designation or 'Staff'}"
     
     @property
-    def performance_score(self):
-        """
-        Dynamic performance calculation based on attendance rate.
-        Example: (Days Present / Total Days) * 100
-        """
+    def calculated_performance_score(self):
         total_days = self.attendance_records.count()
         if total_days == 0:
             return 0
@@ -71,7 +66,7 @@ class Staff(models.Model):
 class Attendance(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     staff = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='attendance_records')
-    date = models.DateField(default=timezone.now)
+    date = models.DateField(default=date.today)
     check_in = models.TimeField(blank=True, null=True)
     check_out = models.TimeField(blank=True, null=True)
     work_duration = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
@@ -134,23 +129,20 @@ class Payroll(models.Model):
     
     @property
     def current_salary(self):
-        """
-        Returns the latest total salary from Payroll for this staff.
-        """
         latest_payroll = self.payrolls.order_by('-year', '-month').first()
         if latest_payroll:
             return latest_payroll.total_salary
-        return self.monthly_salary 
+        return self.staff.monthly_salary
 
     def save(self, *args, **kwargs):
         from django.utils.text import slugify
         if not self.slug:
-            self.slug = slugify(f"payroll-{self.staff.user.username}-{uuid.uuid4().hex[:6]}")
+            self.slug = slugify(f"payroll-{self.staff.user.full_name}-{uuid.uuid4().hex[:6]}")
         self.total_salary = self.calculate_salary()
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.staff.user.get_full_name()} - {self.month}/{self.year}"
+        return f"{self.staff.user.full_name} - {self.month}/{self.year}"
     
 class Leave(models.Model):
     STATUS_CHOICES = [
