@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem
+from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, DiscountRule
 
 @admin.register(MenuCategory)
 class MenuCategoryAdmin(admin.ModelAdmin):
@@ -65,3 +65,10 @@ class OrderItemAdmin(admin.ModelAdmin):
             'fields': ('slug', 'order', 'menu_item', 'quantity', 'price')
         }),
     )
+
+@admin.register(DiscountRule)
+class DiscountRuleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'min_amount', 'max_amount', 'percentage', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('name',)
+    ordering = ('min_amount',)

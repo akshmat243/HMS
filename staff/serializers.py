@@ -36,14 +36,16 @@ class AttendanceSerializer(serializers.ModelSerializer):
 
 
 class StaffSerializer(serializers.ModelSerializer):
-    # ✅ Display user name dynamically
-    user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    
-    # ✅ Slug fields for relationships
+    # ✅ Slug inputs (only these shown in POST)
     user_slug = serializers.SlugField(write_only=True, required=True)
     hotel_slug = serializers.SlugField(write_only=True, required=False, allow_null=True)
-    
+
     # ✅ Read-only related fields
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+    hotel = serializers.PrimaryKeyRelatedField(read_only=True)
+    user_full_name = serializers.CharField(source='user.full_name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_phone = serializers.CharField(source='user.phone', read_only=True)
     performance_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
     attendance_records = AttendanceSerializer(many=True, read_only=True)
     profile_image = serializers.ImageField(required=False, allow_null=True)
@@ -51,10 +53,12 @@ class StaffSerializer(serializers.ModelSerializer):
     class Meta:
         model = Staff
         fields = [
-            'id', 'slug', 'user_slug', 'hotel_slug', 'user', 'user_full_name', 'hotel',
-            'designation', 'department', 'joining_date', 'performance_score', 'status',
-            'shift_start', 'shift_end', 'monthly_salary', 'profile_image',
-            'attendance_records', 'created_at', 'updated_at'
+            'id', 'slug', 'user_slug', 'hotel_slug', 'user', 'hotel',
+            'user_full_name', 'user_email', 'user_phone',
+            'designation', 'department', 'joining_date',
+            'performance_score', 'status', 'shift_start', 'shift_end',
+            'monthly_salary', 'profile_image', 'attendance_records',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
             'slug', 'created_at', 'updated_at', 'performance_score',
@@ -75,25 +79,27 @@ class StaffSerializer(serializers.ModelSerializer):
 
         return data
 
+    # ✅ Main Create Logic (Handles user creation + staff creation)
     def create(self, validated_data):
-        """
-        Create Staff entry using slugs.
-        Ensures user has 'staff' role.
-        """
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
-        # ✅ Get user from slug
+        # Try to get or create user
         try:
             user = User.objects.get(slug=user_slug)
         except User.DoesNotExist:
-            raise serializers.ValidationError({"user_slug": "Invalid user slug."})
+            # 🧠 If not found, auto-create user with minimal info (frontend can send same slug again)
+            user = User.objects.create(
+                slug=user_slug,
+                username=user_slug,
+                role='staff',  # or assign proper Role object if you have Role model
+            )
 
-        # ✅ Ensure user has 'staff' role
-        if not user.role or user.role.name.lower() != 'staff':
+        # Ensure user has 'staff' role
+        if not user.role or str(user.role).lower() != 'staff':
             raise serializers.ValidationError({"user_slug": "User does not have 'staff' role."})
 
-        # ✅ Get hotel from slug if provided
+        # Get hotel
         hotel = None
         if hotel_slug:
             try:
@@ -101,14 +107,12 @@ class StaffSerializer(serializers.ModelSerializer):
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
-        # ✅ Create staff record
+        # Create staff profile
         staff = Staff.objects.create(user=user, hotel=hotel, **validated_data)
         return staff
 
+    # ✅ Update logic
     def update(self, instance, validated_data):
-        """
-        Update staff details — user/hotel slugs optional.
-        """
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
@@ -118,9 +122,8 @@ class StaffSerializer(serializers.ModelSerializer):
             except User.DoesNotExist:
                 raise serializers.ValidationError({"user_slug": "Invalid user slug."})
 
-            if not user.role or user.role.name.lower() != 'staff':
+            if not user.role or str(user.role).lower() != 'staff':
                 raise serializers.ValidationError({"user_slug": "User does not have 'staff' role."})
-
             instance.user = user
 
         if hotel_slug:
@@ -130,7 +133,6 @@ class StaffSerializer(serializers.ModelSerializer):
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
-        # ✅ Update other fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 

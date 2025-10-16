@@ -128,9 +128,13 @@ class RoomViewSet(ProtectedModelViewSet):
         check_out = request.query_params.get('check_out')
         guests = request.query_params.get('guests')
         rooms_required = request.query_params.get('rooms_required')
+        room_category = request.query_params.get('room_category')  # ✅ new param
 
         if not all([check_in, check_out, guests, rooms_required]):
-            return Response({"error": "Missing required parameters."}, status=400)
+            return Response(
+                {"error": "Missing required parameters: check_in, check_out, guests, rooms_required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             check_in = datetime.strptime(check_in, "%Y-%m-%d").date()
@@ -138,28 +142,41 @@ class RoomViewSet(ProtectedModelViewSet):
             guests = int(guests)
             rooms_required = int(rooms_required)
         except ValueError:
-            return Response({"error": "Invalid date or number format."}, status=400)
+            return Response({"error": "Invalid date or number format."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ✅ Find booked rooms in that date range
         booked_room_ids = Booking.objects.filter(
             Q(check_in__lt=check_out) & Q(check_out__gt=check_in),
             status__in=['pending', 'confirmed', 'checked_in']
         ).values_list('room_id', flat=True)
 
+        # ✅ Start with available rooms
         available_rooms = Room.objects.exclude(id__in=booked_room_ids).filter(
             is_available=True,
             status='available'
         )
 
-        if available_rooms.count() < rooms_required:
-            return Response({"message": "Not enough rooms available."}, status=200)
+        # ✅ Apply optional room_category filter
+        if room_category:
+            available_rooms = available_rooms.filter(category__slug=room_category)
 
+        # ✅ Check availability
+        if available_rooms.count() < rooms_required:
+            return Response({
+                "message": "Not enough rooms available.",
+                "total_available": available_rooms.count(),
+                "room_category": room_category or "all"
+            }, status=status.HTTP_200_OK)
+
+        # ✅ Serialize and respond
         serialized = RoomSerializer(available_rooms[:rooms_required], many=True)
         return Response({
             "available_rooms": serialized.data,
             "total_available": available_rooms.count(),
-        })
-
-# GET /api/rooms/check-availability/?check_in=2025-07-25&check_out=2025-07-28&guests=2&rooms_required=1
+            "room_category": room_category or "all"
+        }, status=status.HTTP_200_OK)
+        
+# GET /api/rooms/check-availability/?check_in=2025-07-25&check_out=2025-07-28&guests=2&rooms_required=1&room_category=deluxe
 
 
 class BookingViewSet(ProtectedModelViewSet):

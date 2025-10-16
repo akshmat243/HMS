@@ -106,7 +106,7 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=Hotel.objects.all()
     )
-    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    # user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     order_items = OrderItemSerializer(many=True, required=False)
 
     guest_phone = serializers.CharField(
@@ -117,19 +117,11 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = RestaurantOrder
         fields = [
-            'slug',
-            'hotel',
-            'table',
-            'user',
-            'guest_name',
-            'guest_phone',
-            'remarks',
-            'status',
-            'order_time',
-            'completed_at',
-            'order_items',
+            'slug', 'hotel', 'table', 'guest_name', 'guest_phone', 'remarks', 'status',
+            'order_time', 'completed_at', 'order_items',
+            'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total'
         ]
-        read_only_fields = ['slug', 'order_time', 'completed_at']
+        read_only_fields = ['slug', 'order_time', 'completed_at', 'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total']
 
     def validate(self, data):
         """Custom validation to ensure required guest details."""
