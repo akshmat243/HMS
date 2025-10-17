@@ -1,12 +1,14 @@
 from rest_framework import serializers
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia
 
 
 class HotelSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source='owner.full_name', read_only=True)
+    
     class Meta:
         model = Hotel
         fields = '__all__'
-        read_only_fields = ['slug']
+        read_only_fields = ['slug', 'created_at', 'updated_at', 'owner']
 
     def validate_name(self, value):
         qs = Hotel.objects.filter(name=value)
@@ -15,6 +17,11 @@ class HotelSerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("Hotel with this name already exists.")
         return value
+    
+    def create(self, validated_data):
+        user = self.context['request'].user
+        validated_data['owner'] = user
+        return super().create(validated_data)
 
 
 class RoomCategorySerializer(serializers.ModelSerializer):
@@ -36,39 +43,101 @@ class RoomCategorySerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("A room category with this name already exists.")
         return value
+    
+    
+class RoomMediaSerializer(serializers.ModelSerializer):
+    """Serializer for room media (images/videos)."""
+    class Meta:
+        model = RoomMedia
+        fields = ['id', 'file', 'media_type', 'caption']
 
 
 class RoomSerializer(serializers.ModelSerializer):
-    
-    hotel = serializers.SlugRelatedField(
+    """Serializer for displaying room with its media."""
+    media = RoomMediaSerializer(many=True, read_only=True)
+    hotel_slug = serializers.SlugRelatedField(
+        source='hotel',
         slug_field='slug',
-        queryset=Hotel.objects.all()
-    )
-    room_category = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=RoomCategory.objects.all(),
+        queryset=Hotel.objects.all(),
         required=False,
         allow_null=True
     )
-    
+
     class Meta:
         model = Room
-        fields = '__all__'
+        fields = [
+            'id', 'hotel_slug', 'room_category', 'room_number', 'room_code', 'slug',
+            'floor', 'is_available', 'status', 'price_per_night', 'amenities',
+            'bed_type', 'room_size', 'view', 'description', 'media'
+        ]
         read_only_fields = ['slug']
-        extra_kwargs = {
-            'room_number': {'required': False, 'read_only': True},
-            'slug': {'required': False, 'read_only': True},
-        }
 
     def validate(self, data):
-        """
-        Validate only hotel and floor; room_number is auto-generated.
-        """
-        if not data.get('hotel') and not getattr(self.instance, 'hotel', None):
-            raise serializers.ValidationError({"hotel": "Hotel is required."})
-        if not data.get('floor') and not getattr(self.instance, 'floor', None):
-            raise serializers.ValidationError({"floor": "Floor is required."})
+        """Automatically assign hotel for admin users."""
+        request = self.context.get('request')
+        user = request.user
+
+        if user.is_superuser:
+            if 'hotel' not in data or data['hotel'] is None:
+                raise serializers.ValidationError("Superuser must specify a hotel.")
+        elif hasattr(user, 'role') and user.role == 'admin':
+            data['hotel'] = getattr(user, 'hotel', None)
+            if not data['hotel']:
+                raise serializers.ValidationError("You are not assigned to any hotel.")
+        else:
+            raise serializers.ValidationError("You do not have permission to manage rooms.")
         return data
+
+
+class RoomCreateUpdateSerializer(RoomSerializer):
+    """
+    Serializer for creating/updating rooms with multiple media uploads.
+    Accepts 'media_files' as list of files with 'media_type' = image/video.
+    """
+    media_files = serializers.ListField(
+        child=serializers.FileField(),
+        write_only=True,
+        required=False
+    )
+    media_type = serializers.ChoiceField(
+        choices=RoomMedia.ROOM_MEDIA_TYPE,
+        write_only=True,
+        required=False,
+        default='image'
+    )
+
+    class Meta(RoomSerializer.Meta):
+        fields = RoomSerializer.Meta.fields + ['media_files', 'media_type']
+
+    def create(self, validated_data):
+        media_files = validated_data.pop('media_files', [])
+        media_type = validated_data.pop('media_type', 'image')
+        request = self.context.get('request')
+        user = request.user
+
+        # Assign hotel for admin users
+        if hasattr(user, 'role') and user.role == 'admin':
+            validated_data['hotel'] = getattr(user, 'hotel', None)
+
+        room = Room.objects.create(**validated_data)
+
+        # Save uploaded media files
+        for file in media_files:
+            RoomMedia.objects.create(room=room, file=file, media_type=media_type)
+        return room
+
+    def update(self, instance, validated_data):
+        media_files = validated_data.pop('media_files', [])
+        media_type = validated_data.pop('media_type', 'image')
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Append new media files (don’t delete old ones)
+        for file in media_files:
+            RoomMedia.objects.create(room=instance, file=file, media_type=media_type)
+        return instance
 
 from datetime import date
 

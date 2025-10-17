@@ -5,13 +5,14 @@ from rest_framework.response import Response
 from django.db.models import Count, Q, F, Avg, Sum
 from django.utils import timezone
 from rest_framework import status
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia
 from .serializers import (
     HotelSerializer,
     RoomCategorySerializer,
     RoomSerializer,
     BookingSerializer,
     RoomServiceRequestSerializer,
+    RoomCreateUpdateSerializer,
 )
 
 
@@ -39,10 +40,65 @@ def is_valid_uuid(value):
 
 
 class RoomViewSet(ProtectedModelViewSet):
-    queryset = Room.objects.all()
+    """
+    ViewSet for managing Rooms.
+    Supports:
+    - CRUD operations
+    - Uploading multiple images/videos
+    - Filtering available rooms
+    """
+    queryset = Room.objects.all().select_related('hotel', 'room_category').prefetch_related('media')
     serializer_class = RoomSerializer
     model_name = 'Room'
     lookup_field = 'slug'
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return Room.objects.all()
+        elif hasattr(user, 'role') and user.role.name.lower == 'Admin':
+            return Room.objects.filter(hotel=user.hotel)
+        return Room.objects.none()
+    
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return RoomCreateUpdateSerializer
+        return RoomSerializer
+
+    # ✅ Custom filter for available rooms
+    @action(detail=False, methods=['get'], url_path='available')
+    def available_rooms(self, request):
+        category_slug = request.query_params.get('category')
+        queryset = self.queryset.filter(is_available=True, status='available')
+        if category_slug:
+            queryset = queryset.filter(room_category__slug=category_slug)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    # ✅ Upload media (images/videos) for a specific room
+    @action(detail=True, methods=['post'], url_path='upload-media')
+    def upload_media(self, request, slug=None):
+        """
+        Upload one or more media files (images/videos) for a room.
+        POST /api/rooms/<slug>/upload-media/
+        """
+        room = self.get_object()
+        files = request.FILES.getlist('files')
+        media_type = request.data.get('media_type', 'image')
+
+        if not files:
+            return Response({"error": "No files uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+        media_objects = []
+        for file in files:
+            obj = RoomMedia.objects.create(room=room, file=file, media_type=media_type)
+            media_objects.append(obj)
+
+        serializer = RoomMediaSerializer(media_objects, many=True)
+        return Response({
+            "message": f"{len(media_objects)} media file(s) uploaded successfully.",
+            "media": serializer.data
+        }, status=status.HTTP_201_CREATED)
     
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):

@@ -13,6 +13,13 @@ class Hotel(models.Model):
         ('closed', 'Closed'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='hotel',
+        limit_choices_to={'role__name': 'Admin'},
+        help_text="The admin user who owns this hotel"
+    )
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
@@ -35,7 +42,12 @@ class Hotel(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug or self.name != Hotel.objects.filter(id=self.id).first().name:
             self.slug = slugify(self.name)
+            
+         # Enforce single hotel per admin
+        if self.owner and Hotel.objects.exclude(id=self.id).filter(owner=self.owner).exists():
+            raise ValueError(f"Admin {self.owner.full_name} already owns a hotel.")
         super().save(*args, **kwargs)
+
 
 
 
@@ -50,7 +62,6 @@ class RoomCategory(models.Model):
     amenities = models.TextField(help_text="Comma-separated list of amenities")
     image = models.ImageField(upload_to='hotel/room_categories/', blank=True, null=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.0)
-    # created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.name} - {self.hotel.name}"
@@ -67,7 +78,6 @@ class RoomCategory(models.Model):
         super().save(*args, **kwargs)
 
 
-
 class Room(models.Model):
     STATUS_CHOICES = [
         ('available', 'Available'),
@@ -79,11 +89,22 @@ class Room(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='rooms')
     room_category = models.ForeignKey(RoomCategory, on_delete=models.SET_NULL, null=True, related_name='rooms')
+
     room_number = models.CharField(max_length=20, blank=True)
+    room_code = models.CharField(max_length=20, unique=True, help_text="Unique code for internal identification")
     slug = models.SlugField(unique=True, blank=True)
+
     floor = models.CharField(max_length=20)
     is_available = models.BooleanField(default=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
+
+    # Extended fields
+    price_per_night = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    amenities = models.TextField(blank=True, help_text="Optional: Comma-separated list specific to this room")
+    bed_type = models.CharField(max_length=50, blank=True, help_text="e.g. King, Queen, Twin")
+    room_size = models.CharField(max_length=50, blank=True, help_text="e.g. 30 sqm, 350 sqft")
+    view = models.CharField(max_length=100, blank=True, help_text="e.g. Sea View, City View, Garden View")
+    description = models.TextField(blank=True)
 
     class Meta:
         unique_together = ('hotel', 'room_number')
@@ -93,7 +114,6 @@ class Room(models.Model):
         return f"{self.room_number} - {self.hotel.name}"
 
     def save(self, *args, **kwargs):
-        # prevent duplicate generation in concurrent saves
         with transaction.atomic():
             if not self.room_number:
                 count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
@@ -103,7 +123,6 @@ class Room(models.Model):
                 except ValueError:
                     self.room_number = f"R{self.floor}{count:02d}"
 
-                # ensure uniqueness in case of race condition
                 while Room.objects.filter(hotel=self.hotel, room_number=self.room_number).exists():
                     count += 1
                     try:
@@ -121,7 +140,31 @@ class Room(models.Model):
                     index += 1
                 self.slug = slug
 
+            # Auto-generate room_code if not set
+            # if not self.room_code:
+            #     self.room_code = f"RM-{uuid.uuid4().hex[:8].upper()}"
+
+            # Default room price from category if not manually set
+            if not self.price_per_night and self.room_category:
+                self.price_per_night = self.room_category.price_per_night
+
             super().save(*args, **kwargs)
+
+
+class RoomMedia(models.Model):
+    ROOM_MEDIA_TYPE = [
+        ('image', 'Image'),
+        ('video', 'Video'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='media')
+    file = models.FileField(upload_to='hotel/rooms/media/')
+    media_type = models.CharField(max_length=10, choices=ROOM_MEDIA_TYPE, default='image')
+    caption = models.CharField(max_length=255, blank=True)
+
+    def __str__(self):
+        return f"{self.media_type.capitalize()} for {self.room.room_number}"
 
 
 class Booking(models.Model):

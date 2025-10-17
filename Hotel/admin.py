@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia
 
 class GuestInline(admin.TabularInline):
     model = Guest
@@ -19,18 +19,23 @@ class HotelAdmin(admin.ModelAdmin):
     list_filter = ('city', 'state', 'country')
 
 
+class RoomMediaInline(admin.TabularInline):
+    model = RoomMedia
+    extra = 1
+
 @admin.register(RoomCategory)
 class RoomCategoryAdmin(admin.ModelAdmin):
     list_display = ('name', 'hotel', 'price_per_night', 'max_occupancy')
-    search_fields = ('name', 'hotel__name')
-    list_filter = ('hotel',)
-
+    prepopulated_fields = {'slug': ('name',)}
 
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ('room_number', 'hotel', 'room_category', 'floor', 'status', 'is_available')
-    search_fields = ('room_number', 'hotel__name')
-    list_filter = ('status', 'hotel')
+    list_display = ('room_number', 'hotel', 'room_category', 'status', 'price_per_night')
+    inlines = [RoomMediaInline]
+    search_fields = ('room_number', 'room_code', 'hotel__name')
+    list_filter = ('status', 'hotel', 'room_category')
+
+admin.site.register(RoomMedia)
 
 
 @admin.register(Booking)

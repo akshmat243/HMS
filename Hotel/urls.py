@@ -5,7 +5,8 @@ from .views import (
     RoomCategoryViewSet,
     RoomViewSet,
     BookingViewSet,
-    RoomServiceRequestViewSet
+    RoomServiceRequestViewSet,
+    # RoomMediaViewSet
 )
 
 router = DefaultRouter()
@@ -14,6 +15,8 @@ router.register('room-categories', RoomCategoryViewSet)
 router.register('rooms', RoomViewSet)
 router.register('bookings', BookingViewSet)
 router.register('room-service-requests', RoomServiceRequestViewSet)
+# router.register(r'room-media', RoomMediaViewSet, basename='room-media')
+
 
 urlpatterns = [
     path('api/', include(router.urls)),
