@@ -62,6 +62,11 @@ class RoomSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
+    
+    room_category = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=RoomCategory.objects.all()
+    )
 
     class Meta:
         model = Room
