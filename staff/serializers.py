@@ -4,6 +4,8 @@ from datetime import time
 from django.contrib.auth import get_user_model
 from Hotel.models import Hotel
 User = get_user_model()
+from django.core.mail import send_mail
+from django.conf import settings
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
@@ -36,7 +38,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
 
 
 class StaffSerializer(serializers.ModelSerializer):
-    # ✅ Slug inputs (only these shown in POST)
+    # ✅ Slug inputs
     user_slug = serializers.SlugField(write_only=True, required=True)
     hotel_slug = serializers.SlugField(write_only=True, required=False, allow_null=True)
 
@@ -50,11 +52,17 @@ class StaffSerializer(serializers.ModelSerializer):
     attendance_records = AttendanceSerializer(many=True, read_only=True)
     profile_image = serializers.ImageField(required=False, allow_null=True)
 
+    # ✅ Add writable user fields for update
+    full_name = serializers.CharField(write_only=True, required=False)
+    email = serializers.EmailField(write_only=True, required=False)
+    phone = serializers.CharField(write_only=True, required=False)
+
     class Meta:
         model = Staff
         fields = [
             'id', 'slug', 'user_slug', 'hotel_slug', 'user', 'hotel',
             'user_full_name', 'user_email', 'user_phone',
+            'full_name', 'email', 'phone',
             'designation', 'department', 'joining_date',
             'performance_score', 'status', 'shift_start', 'shift_end',
             'monthly_salary', 'profile_image', 'attendance_records',
@@ -65,41 +73,32 @@ class StaffSerializer(serializers.ModelSerializer):
             'user', 'hotel'
         ]
 
-    # ✅ Validation logic
     def validate(self, data):
         shift_start = data.get('shift_start')
         shift_end = data.get('shift_end')
         salary = data.get('monthly_salary', 0)
-
         if shift_start and shift_end and shift_start >= shift_end:
             raise serializers.ValidationError({"shift_end": "Shift end time must be after shift start time."})
-
         if salary < 0:
             raise serializers.ValidationError({"monthly_salary": "Monthly salary cannot be negative."})
-
         return data
 
-    # ✅ Main Create Logic (Handles user creation + staff creation)
     def create(self, validated_data):
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
-        # Try to get or create user
         try:
             user = User.objects.get(slug=user_slug)
         except User.DoesNotExist:
-            # 🧠 If not found, auto-create user with minimal info (frontend can send same slug again)
             user = User.objects.create(
                 slug=user_slug,
                 username=user_slug,
-                role='staff',  # or assign proper Role object if you have Role model
+                role='staff',
             )
 
-        # Ensure user has 'staff' role
         if not user.role or str(user.role).lower() != 'staff':
             raise serializers.ValidationError({"user_slug": "User does not have 'staff' role."})
 
-        # Get hotel
         hotel = None
         if hotel_slug:
             try:
@@ -107,29 +106,52 @@ class StaffSerializer(serializers.ModelSerializer):
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
-        # Create staff profile
         staff = Staff.objects.create(user=user, hotel=hotel, **validated_data)
         return staff
 
-    # ✅ Update logic
     def update(self, instance, validated_data):
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
+        # Extract possible user fields
+        full_name = validated_data.pop('full_name', None)
+        email = validated_data.pop('email', None)
+        phone = validated_data.pop('phone', None)
+
+        # Get or update related user
+        user = instance.user
         if user_slug:
             try:
                 user = User.objects.get(slug=user_slug)
             except User.DoesNotExist:
                 raise serializers.ValidationError({"user_slug": "Invalid user slug."})
 
-            if not user.role or str(user.role).lower() != 'staff':
-                raise serializers.ValidationError({"user_slug": "User does not have 'staff' role."})
-            instance.user = user
+        email_changed = False
+        if full_name:
+            user.full_name = full_name
+        if phone:
+            user.phone = phone
+        if email and email != user.email:
+            email_changed = True
+            user.email = email
+            if hasattr(user, 'is_email_verified'):
+                user.is_email_verified = False
+
+        user.save()
+
+        # ✅ Send verification email if email changed
+        if email_changed:
+            send_mail(
+                subject="Verify Your Email",
+                message=f"Hi {user.full_name},\n\nPlease verify your new email address.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
 
         if hotel_slug:
             try:
-                hotel = Hotel.objects.get(slug=hotel_slug)
-                instance.hotel = hotel
+                instance.hotel = Hotel.objects.get(slug=hotel_slug)
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
