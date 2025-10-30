@@ -113,6 +113,10 @@ class RoomCreateUpdateSerializer(RoomSerializer):
 
     class Meta(RoomSerializer.Meta):
         fields = RoomSerializer.Meta.fields + ['media_files', 'media_type']
+        extra_kwargs = {
+            'room_number': {'required': False, 'read_only': True},  # ✅ Auto-generate
+            'room_code': {'required': True},  # ✅ Must be passed manually
+        }
 
     def create(self, validated_data):
         media_files = validated_data.pop('media_files', [])
