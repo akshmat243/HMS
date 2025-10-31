@@ -1,27 +1,49 @@
 from rest_framework import serializers
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia
+from django.contrib.auth import get_user_model
+User = get_user_model()
 
 
 class HotelSerializer(serializers.ModelSerializer):
-    owner_username = serializers.CharField(source='owner.full_name', read_only=True)
-    
+    owner_slug = serializers.SlugField(write_only=True, required=True)
+    owner_name = serializers.CharField(source='owner.full_name', read_only=True)
+
     class Meta:
         model = Hotel
-        fields = '__all__'
-        read_only_fields = ['slug', 'created_at', 'updated_at', 'owner']
+        fields = [
+            'id', 'slug', 'name', 'description', 'address', 'city', 'state', 'country',
+            'pincode', 'contact_number', 'email', 'logo', 'cover_image', 'status',
+            'owner_slug', 'owner_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['slug', 'created_at', 'updated_at']
 
-    def validate_name(self, value):
-        qs = Hotel.objects.filter(name=value)
-        if self.instance:
-            qs = qs.exclude(id=self.instance.id)
-        if qs.exists():
-            raise serializers.ValidationError("Hotel with this name already exists.")
-        return value
-    
     def create(self, validated_data):
-        user = self.context['request'].user
-        validated_data['owner'] = user
-        return super().create(validated_data)
+        owner_slug = validated_data.pop('owner_slug')
+        try:
+            owner = User.objects.get(slug=owner_slug)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({'owner_slug': 'Invalid admin user slug'})
+
+        if str(owner.role).lower() != 'admin':
+            raise serializers.ValidationError({'owner_slug': 'User must have Admin role'})
+
+        if Hotel.objects.filter(owner=owner).exists():
+            raise serializers.ValidationError({'owner_slug': 'This admin already owns a hotel'})
+
+        hotel = Hotel.objects.create(owner=owner, **validated_data)
+        return hotel
+
+    def update(self, instance, validated_data):
+        # Prevent changing owner except by superuser
+        if 'owner_slug' in validated_data:
+            request = self.context['request']
+            if not request.user.is_superuser:
+                raise serializers.ValidationError({'owner_slug': 'You cannot change hotel admin.'})
+            owner_slug = validated_data.pop('owner_slug')
+            instance.owner = User.objects.get(slug=owner_slug)
+
+        return super().update(instance, validated_data)
+
 
 
 class RoomCategorySerializer(serializers.ModelSerializer):
@@ -78,19 +100,25 @@ class RoomSerializer(serializers.ModelSerializer):
         read_only_fields = ['slug']
 
     def validate(self, data):
-        """Automatically assign hotel for admin users."""
         request = self.context.get('request')
         user = request.user
 
         if user.is_superuser:
+            # If creating/updating, use existing hotel if not provided
             if 'hotel' not in data or data['hotel'] is None:
-                raise serializers.ValidationError("Superuser must specify a hotel.")
+                if self.instance:
+                    # use existing room hotel
+                    data['hotel'] = self.instance.hotel
+                else:
+                    raise serializers.ValidationError("Superuser must specify a hotel.")
+        
         elif hasattr(user, 'role') and user.role == 'admin':
             data['hotel'] = getattr(user, 'hotel', None)
             if not data['hotel']:
                 raise serializers.ValidationError("You are not assigned to any hotel.")
         else:
             raise serializers.ValidationError("You do not have permission to manage rooms.")
+
         return data
 
 

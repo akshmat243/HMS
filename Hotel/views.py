@@ -6,6 +6,7 @@ from django.db.models import Count, Q, F, Avg, Sum
 from django.utils import timezone
 from rest_framework import status
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia
+from django.core.exceptions import PermissionDenied
 from .serializers import (
     HotelSerializer,
     RoomCategorySerializer,
@@ -21,6 +22,14 @@ class HotelViewSet(ProtectedModelViewSet):
     serializer_class = HotelSerializer
     model_name = 'Hotel'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+            return qs.filter(admin=user)
+        return qs
 
 
 class RoomCategoryViewSet(ProtectedModelViewSet):
@@ -28,6 +37,14 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
     serializer_class = RoomCategorySerializer
     model_name = 'RoomCategory'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+            return qs.filter(admin=user)
+        return qs
 
 import uuid
 
@@ -52,13 +69,36 @@ class RoomViewSet(ProtectedModelViewSet):
     model_name = 'Room'
     lookup_field = 'slug'
 
+    # ✅ 1. Filter queryset per hotel admin
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
+
+        # Superuser → full access
         if user.is_superuser:
-            return Room.objects.all()
-        elif hasattr(user, 'role') and user.role.name.lower == 'Admin':
-            return Room.objects.filter(hotel=user.hotel)
-        return Room.objects.none()
+            return qs
+
+        # If user owns a hotel → limit to that hotel
+        if hasattr(user, 'hotel'):
+            return qs.filter(hotel=user.hotel)
+
+        return qs.none()  # No hotel, no rooms visible
+
+    # ✅ 2. Auto-assign hotel on room creation (no need to pass hotel slug)
+    def perform_create(self, serializer):
+        user = self.request.user
+
+        if hasattr(user, 'hotel'):
+            serializer.save(hotel=user.hotel)
+        elif user.is_superuser:
+            serializer.save()
+        else:
+            raise PermissionDenied("You are not authorized to create rooms.")
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return RoomCreateUpdateSerializer
+        return RoomSerializer
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:

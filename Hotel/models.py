@@ -40,7 +40,7 @@ class Hotel(models.Model):
         return self.name
     
     def save(self, *args, **kwargs):
-        if not self.slug or self.name != Hotel.objects.filter(id=self.id).first().name:
+        if not self.slug:
             self.slug = slugify(self.name)
             
          # Enforce single hotel per admin
