@@ -3,6 +3,8 @@ from django.db import models
 from django.utils.text import slugify
 from Hotel.models import Hotel
 from decimal import Decimal, ROUND_HALF_UP
+from django.db import transaction, IntegrityError
+
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -136,19 +138,31 @@ class RestaurantOrder(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.order_code:
-            last_order = RestaurantOrder.objects.order_by('-order_time').first()
-            next_number = 1
-            if last_order and last_order.order_code:
+            # Retry mechanism for unique order_code
+            for _ in range(5):  # 5 attempts to avoid rare race condition
+                last_order = RestaurantOrder.objects.order_by('-order_time').first()
+                next_number = 1
+                if last_order and last_order.order_code:
+                    try:
+                        next_number = int(last_order.order_code.replace("ORD", "")) + 1
+                    except ValueError:
+                        pass
+                self.order_code = f"ORD{next_number:03d}"
                 try:
-                    next_number = int(last_order.order_code.replace("ORD", "")) + 1
-                except ValueError:
-                    pass
-            self.order_code = f"ORD{next_number:03d}"
-
-        if not self.slug:
-            self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
-
-        super().save(*args, **kwargs)
+                    with transaction.atomic():
+                        if not self.slug:
+                            self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
+                        super().save(*args, **kwargs)
+                    return  # success, exit loop
+                except IntegrityError:
+                    # if duplicate, retry with next number
+                    continue
+            raise IntegrityError("Failed to generate unique order code after several attempts.")
+        else:
+            # normal save for updates
+            if not self.slug:
+                self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
+            super().save(*args, **kwargs)
         
     def get_applicable_discount_rule(self):
         """Return the active discount rule that matches subtotal."""
