@@ -100,8 +100,12 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
     table = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Table.objects.all(),
-        allow_null=True
+        allow_null=True,
+        write_only=True  # only for creating/updating
     )
+
+    # Show table code in output
+    table_code = serializers.SerializerMethodField(read_only=True)
     hotel = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Hotel.objects.all()
@@ -117,12 +121,16 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = RestaurantOrder
         fields = [
-            'slug', 'hotel', 'table', 'guest_name', 'guest_phone', 'remarks', 'status',
+            'slug', 'order_code', 'table_code', 'hotel', 'table', 'guest_name', 'guest_phone', 'remarks', 'status',
             'order_time', 'completed_at', 'order_items',
             'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total'
         ]
-        read_only_fields = ['slug', 'order_time', 'completed_at', 'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total']
+        read_only_fields = ['slug', 'order_code', 'table_code', 'order_time', 'completed_at', 'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total']
 
+    def get_table_code(self, obj):
+        """Return only the table code for display."""
+        return obj.table.code if obj.table else None
+    
     def validate(self, data):
         """Custom validation to ensure required guest details."""
         if not data.get('guest_name'):
