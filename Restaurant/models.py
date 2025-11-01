@@ -127,13 +127,28 @@ class RestaurantOrder(models.Model):
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     
+    order_code = models.CharField(max_length=20, unique=True)
     order_time = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"Order {self.slug or self.id} - {self.guest_name}"
 
-    # def save(self, *args, **kwargs):
+    def save(self, *args, **kwargs):
+        if not self.order_code:
+            last_order = RestaurantOrder.objects.order_by('-order_time').first()
+            next_number = 1
+            if last_order and last_order.order_code:
+                try:
+                    next_number = int(last_order.order_code.replace("ORD", "")) + 1
+                except ValueError:
+                    pass
+            self.order_code = f"ORD{next_number:03d}"
+
+        if not self.slug:
+            self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
+
+        super().save(*args, **kwargs)
         
     def get_applicable_discount_rule(self):
         """Return the active discount rule that matches subtotal."""

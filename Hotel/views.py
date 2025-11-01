@@ -25,11 +25,20 @@ class HotelViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
 
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
-        return qs
+        # ✅ Superuser can see all hotels
+        if user.is_superuser:
+            return Hotel.objects.all()
+
+        # ✅ Admins can see only their own hotel
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return Hotel.objects.filter(owner=user)
+
+        # ✅ Staff can see their hotel (if linked)
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
+
+        return Hotel.objects.none()
 
 
 class RoomCategoryViewSet(ProtectedModelViewSet):
@@ -42,9 +51,16 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
-        return qs
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
 
 import uuid
 
@@ -69,31 +85,35 @@ class RoomViewSet(ProtectedModelViewSet):
     model_name = 'Room'
     lookup_field = 'slug'
 
-    # ✅ 1. Filter queryset per hotel admin
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        # Superuser → full access
         if user.is_superuser:
             return qs
 
-        # If user owns a hotel → limit to that hotel
-        if hasattr(user, 'hotel'):
-            return qs.filter(hotel=user.hotel)
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
 
-        return qs.none()  # No hotel, no rooms visible
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
 
-    # ✅ 2. Auto-assign hotel on room creation (no need to pass hotel slug)
+        return qs.none()
+
     def perform_create(self, serializer):
         user = self.request.user
 
-        if hasattr(user, 'hotel'):
-            serializer.save(hotel=user.hotel)
-        elif user.is_superuser:
+        if user.is_superuser:
             serializer.save()
-        else:
-            raise PermissionDenied("You are not authorized to create rooms.")
+            return
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            hotel = Hotel.objects.filter(owner=user).first()
+            serializer.save(hotel=hotel)
+            return
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            serializer.save(hotel=user.staff_profile.hotel)
 
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -282,9 +302,19 @@ class BookingViewSet(ProtectedModelViewSet):
     lookup_field = 'slug'
     
     def get_queryset(self):
-        if self.request.user.is_superuser:
-            return Booking.objects.all()
-        return Booking.objects.filter(user=self.request.user)
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
     
     @action(detail=True, methods=['post'], url_path='check-in')
     def check_in(self, request, slug=None):
@@ -366,3 +396,18 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
     serializer_class = RoomServiceRequestSerializer
     model_name = 'RoomServiceRequest'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()

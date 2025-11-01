@@ -11,6 +11,7 @@ from .serializers import (
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
 from datetime import date
 from Billing.models import Payment
+from rest_framework import status
 
 
 class MenuCategoryViewSet(ProtectedModelViewSet):
@@ -18,6 +19,21 @@ class MenuCategoryViewSet(ProtectedModelViewSet):
     serializer_class = MenuCategorySerializer
     model_name = 'MenuCategory'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
 
 
 class MenuItemViewSet(ProtectedModelViewSet):
@@ -25,6 +41,8 @@ class MenuItemViewSet(ProtectedModelViewSet):
     serializer_class = MenuItemSerializer
     model_name = 'MenuItem'
     lookup_field = 'slug'
+    
+    
 
 
 class TableViewSet(ProtectedModelViewSet):
@@ -32,6 +50,21 @@ class TableViewSet(ProtectedModelViewSet):
     serializer_class = TableSerializer
     model_name = 'Table'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
 
 
 class RestaurantOrderViewSet(ProtectedModelViewSet):
@@ -41,11 +74,30 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
     lookup_field = 'slug'
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        hotel_id = self.request.query_params.get('hotel')
-        if hotel_id:
-            queryset = queryset.filter(hotel_id=hotel_id)
-        return queryset
+        user = self.request.user
+        qs = super().get_queryset()
+
+        # Superuser: can see all
+        if user.is_superuser:
+            return qs
+
+        # Admin: only their hotel
+        if hasattr(user, 'hotel'):
+            return qs.filter(hotel=user.hotel)
+
+        return qs.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        hotel = getattr(user, 'hotel', None)
+
+        if not hotel and not user.is_superuser:
+            return Response(
+                {"error": "You are not assigned to any hotel."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save(hotel=hotel or serializer.validated_data.get('hotel'))
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):
@@ -71,6 +123,21 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
     """
 
     model_name = "restaurantdashboard" 
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
 
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
