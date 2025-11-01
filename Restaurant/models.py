@@ -136,33 +136,6 @@ class RestaurantOrder(models.Model):
     def __str__(self):
         return f"Order {self.slug or self.id} - {self.guest_name}"
 
-    def save(self, *args, **kwargs):
-        if not self.order_code:
-            # Retry mechanism for unique order_code
-            for _ in range(5):  # 5 attempts to avoid rare race condition
-                last_order = RestaurantOrder.objects.order_by('-order_time').first()
-                next_number = 1
-                if last_order and last_order.order_code:
-                    try:
-                        next_number = int(last_order.order_code.replace("ORD", "")) + 1
-                    except ValueError:
-                        pass
-                self.order_code = f"ORD{next_number:03d}"
-                try:
-                    with transaction.atomic():
-                        if not self.slug:
-                            self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
-                        super().save(*args, **kwargs)
-                    return  # success, exit loop
-                except IntegrityError:
-                    # if duplicate, retry with next number
-                    continue
-            raise IntegrityError("Failed to generate unique order code after several attempts.")
-        else:
-            # normal save for updates
-            if not self.slug:
-                self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
-            super().save(*args, **kwargs)
         
     def get_applicable_discount_rule(self):
         """Return the active discount rule that matches subtotal."""
@@ -175,37 +148,66 @@ class RestaurantOrder(models.Model):
         return None
 
     def save(self, *args, **kwargs):
-        """Auto calculate totals and apply dynamic discount rules."""
-        if not self.slug:
-            base_slug = slugify(f"order-{uuid.uuid4().hex[:6]}")
-            self.slug = base_slug
-        super().save(*args, **kwargs)
-        
-        if self.pk:  # Only calculate if order already exists
-            items = self.order_items.all()
-            self.total_quantity = sum(item.quantity for item in items)
-            self.subtotal = sum(item.price * item.quantity for item in items)
+        """Generate order_code, slug, and calculate totals with discount and taxes."""
+        is_new = self._state.adding  # True if creating a new order
 
-            # Taxes
-            self.sgst = (self.subtotal * Decimal('0.025')).quantize(Decimal('0.01'))
-            self.cgst = (self.subtotal * Decimal('0.025')).quantize(Decimal('0.01'))
+        # Generate unique order_code if new
+        if is_new and not self.order_code:
+            for _ in range(5):  # Retry up to 5 times
+                last_order = RestaurantOrder.objects.order_by('-order_time').first()
+                next_number = 1
+                if last_order and last_order.order_code:
+                    try:
+                        next_number = int(last_order.order_code.replace("ORD", "")) + 1
+                    except ValueError:
+                        pass
+                self.order_code = f"ORD{next_number:03d}"
 
-            # Get applicable discount rule dynamically
-            rule = self.get_applicable_discount_rule()
-            self.discount_rule = rule
+                if not self.slug:
+                    self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
 
-            if rule:
-                self.discount = (self.subtotal * rule.percentage / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                try:
+                    with transaction.atomic():
+                        super().save(*args, **kwargs)
+                    break  # success, exit loop
+                except IntegrityError:
+                    continue
             else:
-                self.discount = Decimal('0.00')
+                raise IntegrityError("Failed to generate unique order code after several attempts.")
 
-            # Final total
-            total_after_tax = self.subtotal + self.sgst + self.cgst
-            self.grand_total = (total_after_tax - self.discount).quantize(Decimal('0.01'))
+        else:
+            # If updating, calculate totals
+            if not self.slug:
+                self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
 
-        if not self.slug:
-            self.slug = slugify(f"order-{uuid.uuid4().hex[:6]}")
-        super().save(*args, **kwargs)
+            super().save(*args, **kwargs)
+
+            if self.pk:
+                items = self.order_items.all()
+                self.total_quantity = sum(item.quantity for item in items)
+                self.subtotal = sum(item.price * item.quantity for item in items)
+
+                # Taxes
+                self.sgst = (self.subtotal * Decimal('0.025')).quantize(Decimal('0.01'))
+                self.cgst = (self.subtotal * Decimal('0.025')).quantize(Decimal('0.01'))
+
+                # Apply discount
+                rule = self.get_applicable_discount_rule()
+                self.discount_rule = rule
+                if rule:
+                    self.discount = (self.subtotal * rule.percentage / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                else:
+                    self.discount = Decimal('0.00')
+
+                total_after_tax = self.subtotal + self.sgst + self.cgst
+                self.grand_total = (total_after_tax - self.discount).quantize(Decimal('0.01'))
+
+                # Save updated totals
+                super().save(update_fields=[
+                    'total_quantity', 'subtotal', 'sgst', 'cgst',
+                    'discount_rule', 'discount', 'grand_total'
+                ])
+
 
 
 class OrderItem(models.Model):

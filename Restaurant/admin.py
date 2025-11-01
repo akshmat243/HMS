@@ -31,7 +31,7 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(RestaurantOrder)
 class RestaurantOrderAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'guest_name', 'guest_phone', 'hotel', 'table', 'status', 'order_time', 'completed_at')
+    list_display = ('order_code', 'guest_name', 'guest_phone', 'hotel', 'table', 'status', 'order_time', 'completed_at')
     list_filter = ('status', 'hotel', 'order_time')
     search_fields = ('guest_name', 'guest_phone', 'slug')
     readonly_fields = ('slug', 'order_time', 'completed_at')
