@@ -129,7 +129,7 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
 
     def get_table_code(self, obj):
         """Return only the table code for display."""
-        return obj.table.code if obj.table else None
+        return obj.table.table_code if obj.table else None
     
     def validate(self, data):
         """Custom validation to ensure required guest details."""
