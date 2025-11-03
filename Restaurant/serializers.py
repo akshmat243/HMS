@@ -95,22 +95,18 @@ class OrderItemSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"price": "Price must be greater than zero."})
         return data
     
-    
 class RestaurantOrderSerializer(serializers.ModelSerializer):
     table = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Table.objects.all(),
         allow_null=True,
-        write_only=True  # only for creating/updating
+        write_only=True
     )
-
-    # Show table code in output
     table_code = serializers.SerializerMethodField(read_only=True)
     hotel = serializers.SlugRelatedField(
         slug_field='slug',
-        queryset=Hotel.objects.all()
+        read_only=True  # prevent cross-hotel tampering
     )
-    # user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     order_items = OrderItemSerializer(many=True, required=False)
 
     guest_phone = serializers.CharField(
@@ -121,18 +117,22 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = RestaurantOrder
         fields = [
-            'slug', 'order_code', 'table_code', 'hotel', 'table', 'guest_name', 'guest_phone', 'remarks', 'status',
-            'order_time', 'completed_at', 'order_items',
-            'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total'
+            'slug', 'order_code', 'table_code', 'hotel', 'table', 'guest_name',
+            'guest_phone', 'remarks', 'status', 'order_time', 'completed_at',
+            'order_items', 'total_quantity', 'subtotal', 'sgst', 'cgst',
+            'discount', 'discount_rule', 'grand_total'
         ]
-        read_only_fields = ['slug', 'order_code', 'table_code', 'order_time', 'completed_at', 'total_quantity', 'subtotal', 'sgst', 'cgst', 'discount', 'discount_rule', 'grand_total']
+        read_only_fields = [
+            'slug', 'order_code', 'table_code', 'order_time', 'completed_at',
+            'total_quantity', 'subtotal', 'sgst', 'cgst',
+            'discount', 'discount_rule', 'grand_total'
+        ]
 
+    # ✅ Safer: Return only the table code
     def get_table_code(self, obj):
-        """Return only the table code for display."""
         return obj.table.table_code if obj.table else None
-    
+
     def validate(self, data):
-        """Custom validation to ensure required guest details."""
         if not data.get('guest_name'):
             raise serializers.ValidationError({"guest_name": "Guest name is required."})
         if not data.get('guest_phone'):
@@ -140,25 +140,44 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Create restaurant order with nested items."""
-        items_data = validated_data.pop('order_items', [])
-        order = RestaurantOrder.objects.create(**validated_data)
+        request = self.context.get('request')
+        user = request.user if request else None
 
+        # ✅ Link to user's assigned hotel automatically
+        if hasattr(user, 'hotel_profile'):
+            validated_data['hotel'] = user.hotel_profile.hotel
+        elif hasattr(user, 'hotel'):
+            validated_data['hotel'] = user.hotel
+        else:
+            raise serializers.ValidationError({"hotel": "User is not linked to any hotel."})
+
+        items_data = validated_data.pop('order_items', [])
+        table = validated_data.get('table')
+
+        # ✅ Ensure table belongs to the same hotel
+        if table and table.hotel != validated_data['hotel']:
+            raise serializers.ValidationError({"table": "This table does not belong to your hotel."})
+
+        order = RestaurantOrder.objects.create(**validated_data)
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)
 
         return order
 
     def update(self, instance, validated_data):
-        """Update restaurant order and its nested items."""
         items_data = validated_data.pop('order_items', None)
 
-        # Update basic order fields
+        # ✅ Prevent cross-hotel modifications
+        request = self.context.get('request')
+        user = request.user if request else None
+        user_hotel = getattr(user, 'hotel', None) or getattr(user, 'hotel_profile', None)
+        if user_hotel and instance.hotel != getattr(user_hotel, 'hotel', user_hotel):
+            raise serializers.ValidationError("You cannot modify orders from another hotel.")
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Update order items (replace all if passed)
         if items_data is not None:
             instance.order_items.all().delete()
             for item_data in items_data:

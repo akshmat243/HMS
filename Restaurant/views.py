@@ -75,29 +75,26 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
 
-        # Superuser: can see all
+        # ✅ Superuser: Full access
         if user.is_superuser:
-            return qs
+            return RestaurantOrder.objects.all().select_related('hotel', 'table')
 
-        # Admin: only their hotel
-        if hasattr(user, 'hotel'):
-            return qs.filter(hotel=user.hotel)
+        # ✅ Hotel admin: Only own hotel’s data
+        hotel = getattr(user, 'hotel', None) or getattr(user, 'hotel_profile', None)
+        if hotel:
+            # handle both if user.hotel or user.hotel_profile.hotel exists
+            hotel_obj = getattr(hotel, 'hotel', hotel)
+            return RestaurantOrder.objects.filter(hotel=hotel_obj).select_related('hotel', 'table')
 
-        return qs.none()
+        # ✅ Other users (no hotel assigned): Empty set
+        return RestaurantOrder.objects.none()
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        hotel = getattr(user, 'hotel', None)
-
-        if not hotel and not user.is_superuser:
-            return Response(
-                {"error": "You are not assigned to any hotel."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        serializer.save(hotel=hotel or serializer.validated_data.get('hotel'))
+    def get_serializer_context(self):
+        """Pass request into serializer for user-hotel linking."""
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):

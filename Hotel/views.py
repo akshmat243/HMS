@@ -14,6 +14,7 @@ from .serializers import (
     BookingSerializer,
     RoomServiceRequestSerializer,
     RoomCreateUpdateSerializer,
+    RoomMediaSerializer
 )
 
 
@@ -125,66 +126,109 @@ class RoomViewSet(ProtectedModelViewSet):
             return RoomCreateUpdateSerializer
         return RoomSerializer
 
-    # ✅ Custom filter for available rooms
     @action(detail=False, methods=['get'], url_path='available')
     def available_rooms(self, request):
+        """
+        Returns a list of available rooms.
+        - Superuser can filter with ?hotel=<hotel_id>
+        - Hotel admin sees only their hotel’s available rooms
+        - Optional: ?category=<category_slug>
+        """
+        user = request.user
         category_slug = request.query_params.get('category')
-        queryset = self.queryset.filter(is_available=True, status='available')
+
+        # Superuser can specify hotel id
+        if user.is_superuser:
+            hotel_id = request.query_params.get('hotel')
+            if hotel_id:
+                queryset = self.queryset.filter(hotel_id=hotel_id)
+            else:
+                queryset = self.queryset.all()
+        else:
+            # Regular hotel admin: only their own hotel
+            if hasattr(user, 'hotel'):
+                queryset = self.queryset.filter(hotel=user.hotel)
+            else:
+                return Response(
+                    {"error": "No hotel assigned to your account."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Filter for available rooms
+        queryset = queryset.filter(is_available=True, status='available')
+
+        # Optional category filter
         if category_slug:
             queryset = queryset.filter(room_category__slug=category_slug)
+
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
-    # ✅ Upload media (images/videos) for a specific room
+
     @action(detail=True, methods=['post'], url_path='upload-media')
     def upload_media(self, request, slug=None):
         """
         Upload one or more media files (images/videos) for a room.
-        POST /api/rooms/<slug>/upload-media/
+        Only allowed for the room’s hotel admin or superuser.
         """
         room = self.get_object()
+        user = request.user
+
+        # 🔒 Ensure user belongs to the same hotel (unless superuser)
+        if not user.is_superuser:
+            if not hasattr(user, 'hotel') or room.hotel != user.hotel:
+                return Response(
+                    {"error": "You do not have permission to upload media for this room."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         files = request.FILES.getlist('files')
         media_type = request.data.get('media_type', 'image')
 
         if not files:
             return Response({"error": "No files uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
-        media_objects = []
-        for file in files:
-            obj = RoomMedia.objects.create(room=room, file=file, media_type=media_type)
-            media_objects.append(obj)
+        media_objects = [
+            RoomMedia.objects.create(room=room, file=file, media_type=media_type)
+            for file in files
+        ]
 
         serializer = RoomMediaSerializer(media_objects, many=True)
         return Response({
             "message": f"{len(media_objects)} media file(s) uploaded successfully.",
             "media": serializer.data
         }, status=status.HTTP_201_CREATED)
+
     
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
         """
-        Returns total count of rooms by status for dashboard cards.
-        Example:
-        {
-          "available": 10,
-          "occupied": 5,
-          "reserved": 3,
-          "maintenance": 2,
-          "total_rooms": 20
-        }
+        Returns total count of rooms by status for dashboard cards,
+        but limited to the logged-in admin’s hotel.
+        Superuser can still filter by ?hotel=<hotel_id>.
         """
 
-        hotel_id = request.query_params.get('hotel')
-        rooms = Room.objects.all()
+        user = request.user
 
-        if hotel_id:
-            rooms = rooms.filter(hotel_id=hotel_id)
+        # Superuser can query any hotel via ?hotel=<id>
+        if user.is_superuser:
+            hotel_id = request.query_params.get('hotel')
+            if hotel_id:
+                rooms = Room.objects.filter(hotel_id=hotel_id)
+            else:
+                rooms = Room.objects.all()
+        else:
+            # Normal admin: only their own hotel
+            if hasattr(user, 'hotel'):
+                rooms = Room.objects.filter(hotel=user.hotel)
+            else:
+                return Response(
+                    {"error": "No hotel assigned to your account."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         # Count per status
-        status_counts = (
-            rooms.values('status')
-            .annotate(total=Count('id'))
-        )
+        status_counts = rooms.values('status').annotate(total=Count('id'))
 
         data = {status['status']: status['total'] for status in status_counts}
 
@@ -195,23 +239,35 @@ class RoomViewSet(ProtectedModelViewSet):
         data['total_rooms'] = sum(data.values())
 
         return Response(data)
-    
+
     @action(detail=False, methods=['get'], url_path='occupancy-summary')
     def occupancy_summary(self, request):
+        user = request.user
         hotel_id = request.query_params.get('hotel')
-        
+
+        # 🔒 Enforce hotel scope
+        if not user.is_superuser:
+            # if your user has a foreign key like user.hotel
+            if hasattr(user, 'hotel') and user.hotel:
+                hotel_id = user.hotel.id
+            else:
+                return Response({"error": "You are not associated with any hotel."},
+                                status=status.HTTP_403_FORBIDDEN)
+
         if not hotel_id:
             return Response({"error": "Hotel ID is required."}, status=400)
 
-        total_rooms = Room.objects.filter(hotel_id=hotel_id).count()
-        occupied_rooms = Room.objects.filter(hotel_id=hotel_id, status='occupied').count()
+        # ✅ Use aggregation for performance
+        rooms = Room.objects.filter(hotel_id=hotel_id)
+        total_rooms = rooms.count()
+        occupied_rooms = rooms.filter(status='occupied').count()
 
         if total_rooms == 0:
             return Response({
                 'occupancy_percentage': 0,
                 'total_rooms': 0,
                 'occupied_rooms': 0
-            })
+            }, status=200)
 
         occupancy_percentage = round((occupied_rooms / total_rooms) * 100, 2)
 
@@ -219,16 +275,31 @@ class RoomViewSet(ProtectedModelViewSet):
             'total_rooms': total_rooms,
             'occupied_rooms': occupied_rooms,
             'occupancy_percentage': occupancy_percentage
-        })
+        }, status=200)
+
     
     @action(detail=False, methods=['get'], url_path='status-summary')
     def status_summary(self, request):
+        user = request.user
         hotel_id = request.query_params.get('hotel')
-        queryset = Room.objects.all()
 
-        if hotel_id and is_valid_uuid(hotel_id):
-            queryset = queryset.filter(hotel_id=hotel_id)
+        # 🔒 Restrict hotel scope
+        if not user.is_superuser:
+            if hasattr(user, 'hotel') and user.hotel:
+                hotel_id = user.hotel.id
+            else:
+                return Response(
+                    {"error": "You are not associated with any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
+        if not hotel_id or not is_valid_uuid(hotel_id):
+            return Response({"error": "Valid hotel ID is required."}, status=400)
+
+        # ✅ Filter by hotel
+        queryset = Room.objects.filter(hotel_id=hotel_id)
+
+        # ✅ Aggregate status counts
         summary = (
             queryset
             .values('status')
@@ -236,16 +307,40 @@ class RoomViewSet(ProtectedModelViewSet):
             .order_by('status')
         )
 
-        return Response({item['status']: item['total'] for item in summary})
+        data = {item['status']: item['total'] for item in summary}
+
+        # ✅ Ensure all statuses appear even if 0
+        for key in ['available', 'occupied', 'reserved', 'maintenance']:
+            data.setdefault(key, 0)
+
+        data['total_rooms'] = sum(data.values())
+
+        return Response(data, status=200)
     
     @action(detail=False, methods=['get'], url_path='check-availability')
     def check_availability(self, request):
+        """
+        Check available rooms for a given date range and optional category.
+        Restricts data to the logged-in user's assigned hotel (unless superuser).
+        """
+        user = request.user
+        hotel = None
+
+        # 🔒 Limit hotel scope for admin users
+        if not user.is_superuser:
+            if hasattr(user, 'hotel') and user.hotel:
+                hotel = user.hotel
+            else:
+                return Response({"error": "You are not assigned to any hotel."},
+                                status=status.HTTP_403_FORBIDDEN)
+
         check_in = request.query_params.get('check_in')
         check_out = request.query_params.get('check_out')
         guests = request.query_params.get('guests')
         rooms_required = request.query_params.get('rooms_required')
-        room_category = request.query_params.get('room_category')  # ✅ new param
+        room_category = request.query_params.get('room_category')
 
+        # ✅ Validate required fields
         if not all([check_in, check_out, guests, rooms_required]):
             return Response(
                 {"error": "Missing required parameters: check_in, check_out, guests, rooms_required."},
@@ -260,35 +355,46 @@ class RoomViewSet(ProtectedModelViewSet):
         except ValueError:
             return Response({"error": "Invalid date or number format."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Find booked rooms in that date range
-        booked_room_ids = Booking.objects.filter(
+        if check_in >= check_out:
+            return Response({"error": "Check-out date must be after check-in date."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Filter bookings for the same hotel and date overlap
+        bookings = Booking.objects.filter(
             Q(check_in__lt=check_out) & Q(check_out__gt=check_in),
             status__in=['pending', 'confirmed', 'checked_in']
-        ).values_list('room_id', flat=True)
+        )
+        if hotel:
+            bookings = bookings.filter(room__hotel=hotel)
 
-        # ✅ Start with available rooms
-        available_rooms = Room.objects.exclude(id__in=booked_room_ids).filter(
+        booked_room_ids = bookings.values_list('room_id', flat=True)
+
+        # ✅ Available rooms (scoped by hotel)
+        rooms = Room.objects.exclude(id__in=booked_room_ids).filter(
             is_available=True,
             status='available'
         )
+        if hotel:
+            rooms = rooms.filter(hotel=hotel)
 
-        # ✅ Apply optional room_category filter
+        # ✅ Optional category filter
         if room_category:
-            available_rooms = available_rooms.filter(category__slug=room_category)
+            rooms = rooms.filter(room_category__slug=room_category)
 
-        # ✅ Check availability
-        if available_rooms.count() < rooms_required:
+        total_available = rooms.count()
+
+        if total_available < rooms_required:
             return Response({
                 "message": "Not enough rooms available.",
-                "total_available": available_rooms.count(),
+                "available_count": total_available,
                 "room_category": room_category or "all"
             }, status=status.HTTP_200_OK)
 
-        # ✅ Serialize and respond
-        serialized = RoomSerializer(available_rooms[:rooms_required], many=True)
+        serializer = RoomSerializer(rooms[:rooms_required], many=True)
         return Response({
-            "available_rooms": serialized.data,
-            "total_available": available_rooms.count(),
+            "message": "Rooms available.",
+            "available_rooms": serializer.data,
+            "available_count": total_available,
             "room_category": room_category or "all"
         }, status=status.HTTP_200_OK)
         
@@ -296,118 +402,163 @@ class RoomViewSet(ProtectedModelViewSet):
 
 
 class BookingViewSet(ProtectedModelViewSet):
+    """
+    ViewSet for managing bookings.
+    Ensures hotel admins and staff only access their assigned hotel's bookings.
+    """
     queryset = Booking.objects.all().select_related('hotel', 'room', 'user').prefetch_related('guests')
     serializer_class = BookingSerializer
     model_name = 'Booking'
     lookup_field = 'slug'
-    
+
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
+        # 🔒 Superuser can see everything
         if user.is_superuser:
             return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+        # ✅ Admin role — sees only their own hotel
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
 
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
+        # ✅ Staff profile — sees only bookings for their assigned hotel
+        staff_profile = getattr(user, 'staff_profile', None)
+        if staff_profile and getattr(staff_profile, 'hotel', None):
+            return qs.filter(hotel=staff_profile.hotel)
 
+        # ❌ Others — no access
         return qs.none()
     
+    # ✅ Check-In Endpoint
     @action(detail=True, methods=['post'], url_path='check-in')
     def check_in(self, request, slug=None):
         booking = self.get_object()
 
+        # ✅ Validation
         if booking.status not in ['confirmed', 'pending']:
             return Response(
-                {"error": "Booking cannot be checked in from the current status."},
+                {"error": "Only confirmed or pending bookings can be checked in."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Mark room unavailable
+        if not booking.room:
+            return Response({"error": "No room assigned to this booking."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not booking.room.is_available:
+            return Response({"error": "Room is already occupied or unavailable."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Update room and booking
         booking.room.is_available = False
         booking.room.save(update_fields=['is_available'])
 
-        # Update booking
         booking.status = 'checked_in'
         booking.check_in_time = timezone.now()
         booking.save(update_fields=['status', 'check_in_time'])
 
         return Response(
             {
-                "message": f"{booking.booking_code} checked in successfully.",
+                "message": f"Booking {booking.booking_code} checked in successfully.",
                 "check_in_time": booking.check_in_time,
             },
             status=status.HTTP_200_OK
         )
 
-    # ✅ Check Out Endpoint
+    # ✅ Check-Out Endpoint
     @action(detail=True, methods=['post'], url_path='check-out')
     def check_out(self, request, slug=None):
         booking = self.get_object()
 
+        # ✅ Validation
         if booking.status != 'checked_in':
             return Response(
                 {"error": "Only checked-in bookings can be checked out."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Mark room available again
+        if not booking.room:
+            return Response({"error": "No room assigned to this booking."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Update room and booking
         booking.room.is_available = True
         booking.room.save(update_fields=['is_available'])
 
-        # Update booking
         booking.status = 'checked_out'
         booking.check_out_time = timezone.now()
         booking.save(update_fields=['status', 'check_out_time'])
 
         return Response(
             {
-                "message": f"{booking.booking_code} checked out successfully.",
+                "message": f"Booking {booking.booking_code} checked out successfully.",
                 "check_out_time": booking.check_out_time,
             },
             status=status.HTTP_200_OK
         )        
     
+    # ✅ Today Summary Endpoint
     @action(detail=False, methods=['get'], url_path='today-summary')
     def today_summary(self, request):
-        today = date.today()
+        today = timezone.localdate()
 
-        # Filter bookings for today
-        today_checkins = Booking.objects.filter(check_in=today, status='checked_in')
-        today_checkouts = Booking.objects.filter(check_out=today, status='checked_out')
-        current_guests = Booking.objects.filter(
-            check_in__lte=today,
-            check_out__gte=today,
+        queryset = self.get_queryset()
+
+        # Filtered data
+        today_checkins = queryset.filter(check_in=today, status='checked_in')
+        today_checkouts = queryset.filter(check_out=today, status='checked_out')
+        current_guests = queryset.filter(
+            Q(check_in__lte=today) & Q(check_out__gte=today),
             status='checked_in'
         )
 
+        # Use aggregation for efficiency
+        total_guests = current_guests.aggregate(total=Sum('guests_count'))['total'] or 0
+
         return Response({
-            'today_checkins': today_checkins.count(),
-            'today_checkouts': today_checkouts.count(),
-            'total_guests_in_hotel': sum(b.guests_count for b in current_guests)
-        })
+            "date": today,
+            "today_checkins": today_checkins.count(),
+            "today_checkouts": today_checkouts.count(),
+            "total_guests_in_hotel": total_guests
+        }, status=status.HTTP_200_OK)
 
 
 class RoomServiceRequestViewSet(ProtectedModelViewSet):
-    queryset = RoomServiceRequest.objects.all()
+    queryset = RoomServiceRequest.objects.select_related('hotel', 'room', 'requested_by')
     serializer_class = RoomServiceRequestSerializer
     model_name = 'RoomServiceRequest'
     lookup_field = 'slug'
-    
+
     def get_queryset(self):
+        """
+        Return data based on user role:
+        - Superuser → all data
+        - Hotel Admin → data for hotels they own
+        - Staff → data for their assigned hotel
+        """
         user = self.request.user
         qs = super().get_queryset()
 
         if user.is_superuser:
             return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
 
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+        if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
             return qs.filter(hotel=user.staff_profile.hotel)
 
         return qs.none()
+    
+    @action(detail=False, methods=['get'], url_path='status-summary')
+    def status_summary(self, request):
+        """
+        Returns a summary count of service requests by status.
+        """
+        queryset = self.get_queryset()
+        summary = (
+            queryset.values('status')
+            .annotate(total=Count('id'))
+            .order_by('status')
+        )
+        return Response({item['status']: item['total'] for item in summary}, status=status.HTTP_200_OK)
+
