@@ -11,49 +11,87 @@ from django.db.models import Count, Q, F, Avg, Sum
 
 class StaffViewSet(ProtectedModelViewSet):
     """
-    CRUD for Staff profiles (auto-created when user is assigned the staff role).
-    Includes dashboard summary stats.
+    CRUD for Staff profiles (auto-created when a user is assigned the staff role).
+
+    Role-based access:
+      - Superuser: can view/manage all staff across all hotels
+      - Admin: can view/manage only staff within their assigned hotel
+      - Staff: can only view their own profile
     """
-    queryset = Staff.objects.all().select_related('user')
+    queryset = Staff.objects.all().select_related('user', 'hotel')
     serializer_class = StaffSerializer
     model_name = 'Staff'
     lookup_field = 'slug'
 
+    def get_queryset(self):
+        """Filter queryset based on user role."""
+        user = self.request.user
+
+        # 1️⃣ Superuser → All staff
+        if user.is_superuser:
+            return Staff.objects.all()
+
+        # 2️⃣ Admin → Only staff in their hotel
+        if hasattr(user, "role") and user.role.name.lower() == "admin":
+            hotel = getattr(user, "hotel", None) or getattr(
+                getattr(user, "staff_profile", None), "hotel", None
+            )
+            if hotel:
+                return Staff.objects.filter(hotel=hotel)
+            return Staff.objects.none()
+
+        # 3️⃣ Staff → Only their own record
+        if hasattr(user, "role") and user.role.name.lower() == "staff":
+            return Staff.objects.filter(user=user)
+
+        return Staff.objects.none()
+
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
         """
-        Returns key staff statistics for dashboard:
-        - total staff count
-        - active staff count
-        - average performance score
-        - total monthly payroll
-        Optionally filters by hotel (?hotel=<id>)
+        Dashboard summary for staff management.
+        Role-aware:
+          - Superuser: all hotels
+          - Admin: only their hotel
         """
+        user = request.user
         hotel_id = request.query_params.get('hotel')
 
-        staffs = self.queryset
-        if hotel_id:
+        staffs = self.get_queryset()
+
+        # For superusers, allow optional ?hotel filter
+        if user.is_superuser and hotel_id:
             staffs = staffs.filter(hotel_id=hotel_id)
+
+        # For admins, always restrict to their own hotel
+        elif hasattr(user, "role") and user.role.name.lower() == "admin":
+            hotel = getattr(user, "hotel", None) or getattr(
+                getattr(user, "staff_profile", None), "hotel", None
+            )
+            if not hotel:
+                return Response({"error": "Admin not linked to any hotel."}, status=status.HTTP_400_BAD_REQUEST)
+            staffs = staffs.filter(hotel=hotel)
 
         total_staff = staffs.count()
         active_staff = staffs.filter(status='active').count()
 
-        # Calculate average performance
+        # Calculate average performance (if property exists)
         avg_performance = 0.0
         if total_staff > 0:
             scores = [s.performance_score or 0 for s in staffs]
             avg_performance = round(sum(scores) / total_staff, 2)
 
-        # Monthly payroll total
+        # Monthly payroll
         monthly_payroll = staffs.aggregate(total=Sum('monthly_salary'))['total'] or 0
 
         return Response({
             "total_staff": total_staff,
             "active_staff": active_staff,
             "avg_performance": f"{avg_performance}%",
-            "monthly_payroll": float(monthly_payroll)
+            "monthly_payroll": float(monthly_payroll),
         })
-
+        
+        
 class AttendanceViewSet(ProtectedModelViewSet):
     """
     Manage staff attendance records.
