@@ -11,7 +11,8 @@ from django.db.models import Count, Q, F, Avg, Sum
 
 class StaffViewSet(ProtectedModelViewSet):
     """
-    CRUD for Staff profiles (auto-created when user assigned staff role).
+    CRUD for Staff profiles (auto-created when user is assigned the staff role).
+    Includes dashboard summary stats.
     """
     queryset = Staff.objects.all().select_related('user')
     serializer_class = StaffSerializer
@@ -21,23 +22,29 @@ class StaffViewSet(ProtectedModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
         """
-        Returns key staff statistics for dashboard.
+        Returns key staff statistics for dashboard:
+        - total staff count
+        - active staff count
+        - average performance score
+        - total monthly payroll
+        Optionally filters by hotel (?hotel=<id>)
         """
         hotel_id = request.query_params.get('hotel')
-        staffs = Staff.objects.all()
+
+        staffs = self.queryset
         if hotel_id:
             staffs = staffs.filter(hotel_id=hotel_id)
 
         total_staff = staffs.count()
         active_staff = staffs.filter(status='active').count()
 
-        # Average performance (based on dynamic property)
-        avg_performance = 0
+        # Calculate average performance
+        avg_performance = 0.0
         if total_staff > 0:
-            scores = [s.performance_score for s in staffs]
-            avg_performance = round(sum(scores) / len(scores), 2)
+            scores = [s.performance_score or 0 for s in staffs]
+            avg_performance = round(sum(scores) / total_staff, 2)
 
-        # Monthly payroll sum
+        # Monthly payroll total
         monthly_payroll = staffs.aggregate(total=Sum('monthly_salary'))['total'] or 0
 
         return Response({

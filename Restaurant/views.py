@@ -98,12 +98,29 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):
-        total_orders = RestaurantOrder.objects.count()
-        active_orders = RestaurantOrder.objects.filter(status__in=['pending', 'preparing']).count()
+        user = request.user
+        queryset = RestaurantOrder.objects.all()
+
+        # ✅ Restrict data visibility based on user role
+        if not user.is_superuser:
+            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+                queryset = queryset.filter(hotel__owner=user)
+            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+                queryset = queryset.filter(hotel=user.staff_profile.hotel)
+            else:
+                queryset = queryset.none()
+
+        # ✅ Compute order summary counts
+        total_orders = queryset.count()
+        active_orders = queryset.filter(status__in=['pending', 'preparing']).count()
+        completed_orders = queryset.filter(status='completed').count()
+        cancelled_orders = queryset.filter(status='cancelled').count()
 
         return Response({
-            'total_orders': total_orders,
-            'active_orders': active_orders,
+            "total_orders": total_orders,
+            "active_orders": active_orders,
+            "completed_orders": completed_orders,
+            "cancelled_orders": cancelled_orders,
         })
 
 
@@ -119,36 +136,40 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
     Requires authentication + model-based permission.
     """
 
-    model_name = "restaurantdashboard" 
-    
-    def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset()
-
-        if user.is_superuser:
-            return qs
-
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
-
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
-
-        return qs.none()
+    model_name = "restaurantdashboard"
+    http_method_names = ['get']  # restrict to GET only since this is an analytics endpoint
 
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
+        user = request.user
         hotel_id = request.query_params.get('hotel')
 
-        # 🔹 Base QuerySets
+        # Base QuerySets
         tables = Table.objects.all()
         orders = RestaurantOrder.objects.all()
         payments = Payment.objects.all()
 
-        # 🔹 Optional Hotel Filter
+        # 🔹 Role-Based Filtering
+        if not user.is_superuser:
+            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+                tables = tables.filter(hotel__owner=user)
+                orders = orders.filter(hotel__owner=user)
+                payments = payments.filter(invoice__hotel__owner=user)
+            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+                hotel = user.staff_profile.hotel
+                tables = tables.filter(hotel=hotel)
+                orders = orders.filter(hotel=hotel)
+                payments = payments.filter(invoice__hotel=hotel)
+            else:
+                return Response(
+                    {"error": "You are not associated with any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # 🔹 Optional Manual Hotel Filter (superuser or admin/staff override)
         if hotel_id:
             tables = tables.filter(hotel_id=hotel_id)
-            orders = orders.filter(table__hotel_id=hotel_id)
+            orders = orders.filter(hotel_id=hotel_id)
             payments = payments.filter(invoice__hotel_id=hotel_id)
 
         # 1️⃣ Available Tables
@@ -163,30 +184,36 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
             total=Sum('amount_paid')
         )['total'] or 0
 
-        # 4️⃣ Average Wait Time
+        # 4️⃣ Average Wait Time (in minutes)
         avg_wait_minutes = 0
-        if hasattr(RestaurantOrder, 'completed_at') and hasattr(RestaurantOrder, 'order_time'):
-            avg_expr = ExpressionWrapper(
-                F('completed_at') - F('order_time'),
-                output_field=DurationField()
-            )
-            avg_wait_time = orders.filter(status='completed').aggregate(avg=Avg(avg_expr))['avg']
-            if avg_wait_time:
-                avg_wait_minutes = round(avg_wait_time.total_seconds() / 60, 2)
+        avg_expr = ExpressionWrapper(
+            F('completed_at') - F('order_time'),
+            output_field=DurationField()
+        )
 
+        avg_wait_time = (
+            orders.filter(status='completed', completed_at__isnull=False)
+            .aggregate(avg=Avg(avg_expr))
+            .get('avg')
+        )
+        if avg_wait_time:
+            avg_wait_minutes = round(avg_wait_time.total_seconds() / 60, 2)
+
+        # ✅ Final Response
         return Response({
             "available_tables": available_tables,
             "active_orders": active_orders,
             "todays_revenue": float(todays_revenue),
-            "avg_wait_time": f"{avg_wait_minutes} min",
+            "avg_wait_time": f"{avg_wait_minutes} min"
         })
-
+        
+        
 class TableReservationViewSet(ProtectedModelViewSet):
     """
     Manage Table Reservations.
-    - Superadmin/Admin: can view, create, update, delete all reservations
-    - Staff: can view and manage reservations for their assigned hotel tables only
-    - Public: cannot access unless explicitly allowed
+    - Superuser/Admin: full access to all reservations
+    - Staff: access limited to their hotel's tables
+    - Customers: only their own reservations (matched by email)
     """
     queryset = TableReservation.objects.all().order_by('-created_at')
     serializer_class = TableReservationSerializer
@@ -194,15 +221,26 @@ class TableReservationViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = TableReservation.objects.all().order_by('-created_at')
 
-        # 🧠 Superusers and Admins see all reservations
-        if user.is_superuser or (hasattr(user, "role") and user.role.name.lower() in ["Admin"]):
-            return TableReservation.objects.all().order_by('-created_at')
+        # 🔹 Superuser: full access
+        if user.is_superuser:
+            return qs
 
-        # 🧠 Staff linked to a hotel can see only their hotel's table reservations
-        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+        # 🔹 Admin (hotel owner): only their hotel's reservations
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(table__hotel__owner=user)
+
+        # 🔹 Staff: only reservations for their assigned hotel
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             hotel = user.staff_profile.hotel
-            return TableReservation.objects.filter(table__hotel=hotel).order_by('-created_at')
+            return qs.filter(table__hotel=hotel)
 
-        # 🧠 Other users (like customers) can see their own reservations
-        return TableReservation.objects.filter(email=user.email).order_by('-created_at')
+        # 🔹 Customers (regular users): only their own reservations
+        if user.is_authenticated and user.email:
+            return qs.filter(email=user.email)
+
+        # 🔹 Otherwise: no access
+        return qs.none()
+
+    
