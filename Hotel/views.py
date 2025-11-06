@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework import status
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia
 from django.core.exceptions import PermissionDenied
+from django.utils.text import slugify
 from .serializers import (
     HotelSerializer,
     RoomCategorySerializer,
@@ -40,6 +41,45 @@ class HotelViewSet(ProtectedModelViewSet):
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
         return Hotel.objects.none()
+    
+    @action(detail=False, methods=['get'], url_path='stats')
+    def hotel_stats(self, request):
+        """
+        Custom endpoint to show hotel statistics.
+        Example: /api/hotels/stats/
+        """
+        qs = self.get_queryset()
+
+        # Aggregate counts by status
+        total_hotels = qs.count()
+        status_counts = qs.values('status').annotate(total=Count('status'))
+
+        stats = {
+            'total_hotels': total_hotels,
+            'available': 0,
+            'maintenance': 0,
+            'closed': 0
+        }
+
+        for entry in status_counts:
+            stats[entry['status']] = entry['total']
+
+        return Response(stats, status=status.HTTP_200_OK)
+
+    def perform_create(self, serializer):
+        # Auto-generate slug if not provided
+        name = serializer.validated_data.get('name')
+        slug = slugify(name)
+
+        # Ensure only one hotel per admin
+        owner = serializer.validated_data.get('owner')
+        if owner and Hotel.objects.filter(owner=owner).exists():
+            return Response(
+                {"error": f"Admin {owner.full_name} already owns a hotel."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save(slug=slug)
 
 
 class RoomCategoryViewSet(ProtectedModelViewSet):
@@ -116,11 +156,6 @@ class RoomViewSet(ProtectedModelViewSet):
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             serializer.save(hotel=user.staff_profile.hotel)
 
-    def get_serializer_class(self):
-        if self.action in ['create', 'update', 'partial_update']:
-            return RoomCreateUpdateSerializer
-        return RoomSerializer
-    
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
             return RoomCreateUpdateSerializer
@@ -523,42 +558,129 @@ class BookingViewSet(ProtectedModelViewSet):
 
 
 class RoomServiceRequestViewSet(ProtectedModelViewSet):
-    queryset = RoomServiceRequest.objects.select_related('hotel', 'room', 'requested_by')
+    queryset = RoomServiceRequest.objects.select_related('room', 'room__hotel', 'user')
     serializer_class = RoomServiceRequestSerializer
-    model_name = 'RoomServiceRequest'
     lookup_field = 'slug'
+    model_name = 'RoomServiceRequest'
 
     def get_queryset(self):
-        """
-        Return data based on user role:
-        - Superuser → all data
-        - Hotel Admin → data for hotels they own
-        - Staff → data for their assigned hotel
-        """
         user = self.request.user
         qs = super().get_queryset()
-
         if user.is_superuser:
             return qs
-
+        # Hotel admin access: only data for hotels user owns
         if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
-
+            return qs.filter(room__hotel__owner=user)
+        # Staff: only their assigned hotel
         if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
-            return qs.filter(hotel=user.staff_profile.hotel)
-
+            return qs.filter(room__hotel=user.staff_profile.hotel)
         return qs.none()
+
+    # List API (with optional filters for dashboard, e.g. status, date)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        # Dashboard filter examples (by status, priority, date)
+        status_param = request.query_params.get('status')
+        priority = request.query_params.get('priority')
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        if priority:
+            queryset = queryset.filter(priority=priority)
+        # Today’s orders filter
+        today_param = request.query_params.get('today')
+        if today_param == '1':
+            today = timezone.localdate()
+            queryset = queryset.filter(requested_at__date=today)
+        # Search query
+        search = request.query_params.get('q')
+        if search:
+            queryset = queryset.filter(Q(service_code__icontains=search) | Q(room__room_number__icontains=search))
+        # Usual paginated response
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    # Retrieve API for single request (by slug)
+    def retrieve(self, request, slug=None):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    # Create API (from modal/form: validates via serializer)
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # Update API (status, description, etc.)
+    def update(self, request, slug=None, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
+
+    # PATCH endpoint for status change ("Deliver" button, etc.)
+    @action(detail=True, methods=['post'])
+    def deliver(self, request, slug=None):
+        instance = self.get_object()
+        instance.status = 'delivered'
+        instance.is_resolved = True
+        instance.delivery_time = timezone.now().time()
+        instance.save()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    # Summary/stat API for dashboard widgets
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        qs = self.get_queryset()
+        today = timezone.localdate()
+        orders_today = qs.filter(requested_at__date=today).count()
+        in_progress = qs.filter(status='in_progress').count()
+        ready = qs.filter(status='ready').count()
+        express = qs.filter(priority='express').count()
+        return Response({
+            'orders_today': orders_today,
+            'in_progress': in_progress,
+            'ready_for_delivery': ready,
+            'express_orders': express
+        })
+
+    # Progress tracking API (for timeline/status steps)
+    @action(detail=True, methods=['get'])
+    def progress(self, request, slug=None):
+        instance = self.get_object()
+        progress_data = self._build_progress(instance)
+        return Response(progress_data)
+
+    def _build_progress(self, instance):
+        # Example: timeline for laundry service request
+        steps = []
+        if instance.status == 'pending':
+            steps.append({'step': 'Collection', 'done': False, 'timestamp': None})
+        if instance.status in ['in_progress', 'ready', 'delivered']:
+            steps.append({'step': 'Collection', 'done': True, 'timestamp': str(instance.pickup_time)})
+        if instance.status in ['ready', 'delivered']:
+            steps.append({'step': 'Ready for Delivery', 'done': True, 'timestamp': str(instance.delivery_time)})
+        if instance.status == 'delivered':
+            steps.append({'step': 'Delivered', 'done': True, 'timestamp': str(instance.delivery_time)})
+        return steps
     
-    @action(detail=False, methods=['get'], url_path='status-summary')
-    def status_summary(self, request):
-        """
-        Returns a summary count of service requests by status.
-        """
-        queryset = self.get_queryset()
-        summary = (
-            queryset.values('status')
-            .annotate(total=Count('id'))
-            .order_by('status')
-        )
-        return Response({item['status']: item['total'] for item in summary}, status=status.HTTP_200_OK)
+    # @action(detail=False, methods=['get'], url_path='status-summary')
+    # def status_summary(self, request):
+    #     """
+    #     Returns a summary count of service requests by status.
+    #     """
+    #     queryset = self.get_queryset()
+    #     summary = (
+    #         queryset.values('status')
+    #         .annotate(total=Count('id'))
+    #         .order_by('status')
+    #     )
+    #     return Response({item['status']: item['total'] for item in summary}, status=status.HTTP_200_OK)
 

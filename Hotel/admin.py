@@ -49,9 +49,44 @@ class BookingAdmin(admin.ModelAdmin):
 
 @admin.register(RoomServiceRequest)
 class RoomServiceRequestAdmin(admin.ModelAdmin):
-    list_display = ('room', 'user', 'service_type', 'requested_at', 'is_resolved')
-    list_filter = ('service_type', 'is_resolved')
-    search_fields = ('room__room_number', 'user__full_name', 'description')
+    list_display = [
+        'service_code', 'service_type', 'room', 'booking', 'user',
+        'priority', 'status', 'cost', 'total_cost', 'requested_at', 'is_resolved'
+    ]
+    list_filter = [
+        'service_type', 'priority', 'status', 'is_resolved', 'room__hotel'
+    ]
+    search_fields = [
+        'service_code', 'room__room_number', 'user__full_name',
+        'booking__id', 'slug'
+    ]
+    readonly_fields = [
+        'service_code', 'slug', 'cost', 'base_cost', 'total_cost', 'requested_at'
+    ]
+    ordering = ['-requested_at']
+    fieldsets = (
+        (None, {
+            'fields': (
+                'service_code', 'slug', 'service_type', 'description', 'priority', 'status', 'is_resolved'
+            )
+        }),
+        ('Related Info', {
+            'fields': (
+                'room', 'booking', 'user'
+            )
+        }),
+        ('Cost Details', {
+            'fields': (
+                'base_cost', 'total_cost', 'cost'
+            )
+        }),
+        ('Timing', {
+            'fields': (
+                'requested_at', 'pickup_time', 'delivery_time'
+            )
+        }),
+    )
+
     
     
 @admin.register(Guest)

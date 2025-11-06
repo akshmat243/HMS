@@ -7,6 +7,7 @@ from datetime import time
 from django.utils import timezone
 from rest_framework import status
 from django.db.models import Count, Q, F, Avg, Sum
+from django.db import transaction
 
 
 class StaffViewSet(ProtectedModelViewSet):
@@ -171,23 +172,40 @@ class AttendanceViewSet(ProtectedModelViewSet):
 
         return Response({"message": f"Auto checked out {auto_checked} staff at 8 PM."}, status=status.HTTP_200_OK)
 
+    
+from datetime import date
 
 class PayrollViewSet(ProtectedModelViewSet):
-    """
-    View total payrolls grouped by month or by hotel.
-    """
-    model_name = 'staff-payroll'
+    queryset = Payroll.objects.all().select_related('staff__user')
     serializer_class = PayrollSerializer
-    lookup_field = 'slug'
-    
+    model_name = 'Payroll'
 
     @action(detail=False, methods=['get'], url_path='monthly-summary')
     def monthly_summary(self, request):
+        user = request.user
         hotel_id = request.query_params.get('hotel')
+
         staffs = Staff.objects.all()
+
+        # 🔹 Role-based filtering
+        if not user.is_superuser:
+            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+                # Admin sees only their hotel’s staff
+                staffs = staffs.filter(hotel__owner=user)
+            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+                # Staff sees only themselves
+                staffs = staffs.filter(id=user.staff_profile.id)
+            else:
+                return Response(
+                    {"error": "You are not associated with any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # 🔹 Optional hotel_id filter (only if allowed)
         if hotel_id:
             staffs = staffs.filter(hotel_id=hotel_id)
 
+        # 🔹 Aggregation
         total_payroll = staffs.aggregate(total=Sum('monthly_salary'))['total'] or 0
         avg_salary = staffs.aggregate(avg=Avg('monthly_salary'))['avg'] or 0
 
@@ -196,35 +214,56 @@ class PayrollViewSet(ProtectedModelViewSet):
             "avg_salary": round(avg_salary, 2),
             "staff_count": staffs.count()
         })
-
-from datetime import date
-
-class PayrollViewSet(ProtectedModelViewSet):
-    queryset = Payroll.objects.all().select_related('staff__user')
-    serializer_class = PayrollSerializer
-    model_name = 'Payroll'
-
+        
+        
     @action(detail=False, methods=['post'], url_path='generate-monthly')
     def generate_monthly_payroll(self, request):
         """
-        Generate payroll for all staff for the current month if not already exists.
+        Generate payroll for staff for the current month, with role-based filtering.
+        - Superuser → all hotels
+        - Admin → only their hotel’s staff
+        - Staff → not allowed
         """
+        user = request.user
         today = date.today()
         month, year = today.month, today.year
         created_count = 0
 
-        for staff in Staff.objects.all():
-            if not Payroll.objects.filter(staff=staff, month=month, year=year).exists():
-                Payroll.objects.create(
-                    staff=staff,
-                    salary_type='attendance_based',
-                    base_salary=staff.monthly_salary,
-                    month=month,
-                    year=year
-                )
-                created_count += 1
+        # 🔹 Determine which staff to include
+        staffs = Staff.objects.all()
 
-        return Response({"message": f"Payroll generated for {created_count} staff members."})
+        if not user.is_superuser:
+            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+                staffs = staffs.filter(hotel__owner=user)
+            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+                return Response(
+                    {"error": "You are not authorized to generate payrolls."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            else:
+                return Response(
+                    {"error": "You are not associated with any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # 🔹 Generate payrolls safely
+        with transaction.atomic():
+            for staff in staffs:
+                exists = Payroll.objects.filter(staff=staff, month=month, year=year).exists()
+                if not exists:
+                    Payroll.objects.create(
+                        staff=staff,
+                        salary_type='attendance_based',
+                        base_salary=staff.monthly_salary,
+                        month=month,
+                        year=year
+                    )
+                    created_count += 1
+
+        return Response(
+            {"message": f"✅ Payroll generated for {created_count} staff members for {month}/{year}."},
+            status=status.HTTP_201_CREATED
+        )
     
 
 class LeaveViewSet(ProtectedModelViewSet):
