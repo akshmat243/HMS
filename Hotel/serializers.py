@@ -256,30 +256,28 @@ class BookingSerializer(serializers.ModelSerializer):
         return instance
 
 
-
-from rest_framework import serializers
-from .models import RoomServiceRequest
-
 class RoomServiceRequestSerializer(serializers.ModelSerializer):
     # Readable choice labels
     service_type_display = serializers.CharField(source='get_service_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
-    
+
     # Calculated cost fields (read-only)
     base_cost = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_cost = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     cost = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    
-    # Nested related fields (customize as needed)
+
+    # Nested related fields for display
     room_number = serializers.CharField(source="room.room_number", read_only=True)
     hotel_name = serializers.CharField(source="room.hotel.name", read_only=True)
     user_name = serializers.CharField(source="user.get_full_name", read_only=True)
-    
+    booking_slug = serializers.CharField(source='booking.slug', read_only=True)
+    room_slug = serializers.CharField(source='room.slug', read_only=True)
+
     class Meta:
         model = RoomServiceRequest
         fields = [
-            'id', 'service_code', 'slug', 'booking', 'user', 'room',
+            'id', 'service_code', 'slug', 'booking', 'booking_slug', 'user', 'room', 'room_slug',
             'room_number', 'hotel_name', 'user_name',
             'service_type', 'service_type_display', 'description',
             'priority', 'priority_display', 'status', 'status_display',
@@ -288,10 +286,10 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'service_code', 'slug', 'status_display', 'priority_display', 'service_type_display',
-            'base_cost', 'cost', 'total_cost',
-            'room_number', 'hotel_name', 'user_name', 'requested_at'
+            'base_cost', 'cost', 'total_cost', 'room_number', 'hotel_name', 'user_name', 'requested_at',
+            'booking_slug', 'room_slug'
         ]
-        
+
     # Validate JSON field and all business rules
     def validate_description(self, value):
         if not isinstance(value, dict):
@@ -308,7 +306,6 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Quantity must be a positive integer.")
         return value
 
-    # Example for custom cross-field validations
     def validate(self, attrs):
         if attrs.get('service_type') == 'laundry':
             items = attrs.get('description', {}).get('items', [])
