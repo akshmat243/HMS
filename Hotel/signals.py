@@ -8,5 +8,5 @@ def create_admin_hotel(sender, instance, created, **kwargs):
     if created and getattr(instance, 'role', None) and instance.role.name == 'Admin':
         Hotel.objects.get_or_create(
             owner=instance,
-            defaults={'name': f"{instance.username}'s Hotel"}
+            defaults={'name': f"{instance.full_name}'s Hotel"}
         )
