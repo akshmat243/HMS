@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Page, FAQ, Banner, MetaTag
+from .models import Page, FAQ, Banner, MetaTag, SidebarApp
 
 
 class MetaTagInline(admin.StackedInline):
@@ -34,3 +34,14 @@ class BannerAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     search_fields = ('title', 'subtitle')
     readonly_fields = ('created_at', 'updated_at')
+
+@admin.register(SidebarApp)
+class SidebarAppAdmin(admin.ModelAdmin):
+    list_display = ('name', 'label', 'slug', 'route', 'order', 'is_active', 'group', 'roles_allowed')
+    search_fields = ('name', 'label', 'slug', 'group', 'roles_allowed')
+    list_filter = ('is_active', 'group')
+    ordering = ('order',)
+    readonly_fields = ('slug',)
+    fieldsets = (
+        (None, {'fields': ('name', 'slug', 'label', 'icon', 'route', 'order', 'is_active', 'group', 'roles_allowed')}),
+    )
