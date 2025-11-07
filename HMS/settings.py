@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     'accounts',
     'MBP',
     'staff',
+    'inventory',
 ]
 
 MIDDLEWARE = [
