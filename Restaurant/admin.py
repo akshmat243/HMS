@@ -44,6 +44,9 @@ class RestaurantOrderAdmin(admin.ModelAdmin):
         ('Timestamps', {
             'fields': ('order_time', 'completed_at'),
         }),
+        ('Amount', {
+            'fields': ('subtotal', 'sgst', 'cgst', 'grand_total', 'discount'),
+        }),
     )
 
     def save_model(self, request, obj, form, change):
