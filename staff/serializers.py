@@ -6,6 +6,7 @@ from Hotel.models import Hotel
 User = get_user_model()
 from django.core.mail import send_mail
 from django.conf import settings
+from datetime import datetime, timedelta
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
@@ -77,8 +78,19 @@ class StaffSerializer(serializers.ModelSerializer):
         shift_start = data.get('shift_start')
         shift_end = data.get('shift_end')
         salary = data.get('monthly_salary', 0)
-        if shift_start and shift_end and shift_start >= shift_end:
-            raise serializers.ValidationError({"shift_end": "Shift end time must be after shift start time."})
+        if shift_start and shift_end:
+            # ✅ Allow overnight shifts (e.g., 20:00 to 06:00)
+            if shift_start == shift_end:
+                raise serializers.ValidationError({"shift_end": "Shift end time cannot be the same as shift start time."})
+            
+            # For clarity, we can normalize the times to a datetime object
+            today = datetime.today()
+            start_dt = datetime.combine(today, shift_start)
+            end_dt = datetime.combine(today, shift_end)
+
+            # ✅ If end time is earlier than start, assume it’s the next day (overnight)
+            if end_dt <= start_dt:
+                end_dt += timedelta(days=1)
         if salary < 0:
             raise serializers.ValidationError({"monthly_salary": "Monthly salary cannot be negative."})
         return data
