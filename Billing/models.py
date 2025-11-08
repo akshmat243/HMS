@@ -28,6 +28,7 @@ class Invoice(models.Model):
     issued_at = models.DateTimeField(auto_now_add=True)
     due_date = models.DateField(default=timezone.now)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
     notes = models.TextField(blank=True)
 
@@ -37,15 +38,27 @@ class Invoice(models.Model):
             prefix = f"INV-{year}-"
             last = Invoice.objects.filter(slug__startswith=prefix).count() + 1
             self.slug = f"{prefix}{last:04d}"
+
+        if self.amount_paid >= self.total_amount:
+            self.status = 'paid'
+        elif self.amount_paid > 0:
+            self.status = 'partial'
+        else:
+            self.status = 'unpaid'
+
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Invoice {self.slug} ({self.status})"
 
-    @property
+    '''@property
     def balance_due(self):
         total_paid = self.payments.aggregate(total=models.Sum('amount_paid'))['total'] or 0
-        return max(self.total_amount - total_paid, 0)
+        return max(self.total_amount - total_paid, 0)'''
+    
+    @property
+    def balance_due(self):
+        return max(self.total_amount - self.amount_paid, 0)
 
 
 class InvoiceItem(models.Model):
