@@ -45,7 +45,7 @@ class RestaurantOrderAdmin(admin.ModelAdmin):
             'fields': ('order_time', 'completed_at'),
         }),
         ('Amount', {
-            'fields': ('subtotal', 'sgst', 'cgst', 'grand_total', 'discount'),
+            'fields': ('subtotal', 'sgst', 'cgst', 'discount' 'grand_total',),
         }),
     )
 

@@ -240,6 +240,23 @@ class BookingSerializer(serializers.ModelSerializer):
         booking = Booking.objects.create(**validated_data)
         for guest in guests_data:
             Guest.objects.create(booking=booking, **guest)
+            
+        # ✅ Auto-generate invoice for this booking
+        content_type = ContentType.objects.get_for_model(booking)
+        invoice = Invoice.objects.create(
+            content_type=content_type,
+            object_id=booking.id,
+            issued_to=booking.user,
+            total_amount=booking.room.price,
+            status='unpaid'
+        )
+        InvoiceItem.objects.create(
+            invoice=invoice,
+            description=f"Room Booking - {booking.room.name}",
+            quantity=1,
+            unit_price=booking.room.price
+        )
+        
         return booking
 
     def update(self, instance, validated_data):
@@ -254,6 +271,11 @@ class BookingSerializer(serializers.ModelSerializer):
                 Guest.objects.create(booking=instance, **guest)
 
         return instance
+    
+from Billing.models import Invoice, InvoiceItem
+from django.contrib.contenttypes.models import ContentType
+
+
 
 
 class RoomServiceRequestSerializer(serializers.ModelSerializer):
