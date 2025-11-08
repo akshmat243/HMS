@@ -242,19 +242,19 @@ class BookingSerializer(serializers.ModelSerializer):
             Guest.objects.create(booking=booking, **guest)
             
         # ✅ Auto-generate invoice for this booking
-        content_type = ContentType.objects.get_for_model(booking)
+        content_type = ContentType.objects.get_for_model(Booking)
         invoice = Invoice.objects.create(
             content_type=content_type,
             object_id=booking.id,
             issued_to=booking.user,
-            total_amount=booking.room.price,
+            total_amount=booking.room.price_per_night,
             status='unpaid'
         )
         InvoiceItem.objects.create(
             invoice=invoice,
-            description=f"Room Booking - {booking.room.name}",
+            description=f"Room Booking - {booking.room.room_number}",
             quantity=1,
-            unit_price=booking.room.price
+            unit_price=booking.room.price_per_night
         )
         
         return booking

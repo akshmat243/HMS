@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import Supplier, InventoryItem, InventoryCategory, PurchaseOrder, PurchaseOrderItem
 from datetime import date
+from Billing.models import Invoice, Payment
+from django.contrib.contenttypes.models import ContentType
 
 
 # Supplier
@@ -39,6 +41,15 @@ class InventoryCategorySerializer(serializers.ModelSerializer):
 
 # Item
 class InventoryItemSerializer(serializers.ModelSerializer):
+
+    category = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=InventoryCategory.objects.all()
+    )
+    supplier = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Supplier.objects.all()
+    )
     class Meta:
         model = InventoryItem
         fields = '__all__'
@@ -80,6 +91,11 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 # purchase order
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     total_cost = serializers.ReadOnlyField()
+    order = serializers.PrimaryKeyRelatedField(read_only=True)
+    item = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=InventoryItem.objects.all()
+    )
 
     class Meta:
         model = PurchaseOrderItem
@@ -97,14 +113,70 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
-    items = PurchaseOrderItemSerializer(many=True, read_only=True)
+    supplier = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Supplier.objects.all()
+    )
+
+    items = PurchaseOrderItemSerializer(many=True, required=False)
 
     class Meta:
         model = PurchaseOrder
         fields = ['slug', 'supplier', 'status', 'created_at', 'items']
+        read_only_fields = ['slug', 'created_at']
 
-    def validate_status(self, value):
-        valid_status = ["Pending", "Completed", "Cancelled"]
-        if value not in valid_status:
-            raise serializers.ValidationError(f"Invalid status. Choose from {valid_status}.")
-        return value
+    def create(self, validated_data):
+        request = self.context.get('request')
+        admin_user = request.user if request else None
+
+        # Get items from input
+        items_data = validated_data.pop('items', []) if 'items' in validated_data else self.initial_data.get('items', [])
+
+        # Prevent duplicate admin kwarg
+        validated_data.pop('admin', None)
+
+        # Create main Purchase Order
+        order = PurchaseOrder.objects.create(admin=admin_user, **validated_data)
+
+        # Add items & calculate total
+        total_amount = 0
+        for item_data in items_data:
+            item_slug = item_data.get('item')
+            try:
+                item_obj = InventoryItem.objects.get(slug=item_slug)
+            except InventoryItem.DoesNotExist:
+                raise serializers.ValidationError({"item": f"Invalid item slug '{item_slug}'"})
+
+            purchase_item = PurchaseOrderItem.objects.create(
+                order=order,
+                item=item_obj,
+                quantity=item_data.get('quantity', 0),
+                cost_per_unit=item_data.get('cost_per_unit', 0),
+                admin=admin_user
+            )
+            total_amount += purchase_item.quantity * purchase_item.cost_per_unit
+
+        # Save total amount to order
+        order.total_amount = total_amount
+        order.save()
+
+        # ===== Auto Invoice Generation =====
+        #from django.contrib.contenttypes.models import ContentType
+        content_type = ContentType.objects.get_for_model(order)
+        invoice = Invoice.objects.create(
+            content_type=content_type,
+            object_id=order.id,
+            issued_to=admin_user,
+            total_amount=total_amount,
+            amount_paid=0,
+            status='unpaid'
+        )
+
+        # ===== Auto Payment Record =====
+        Payment.objects.create(
+            invoice=invoice,
+            amount_paid=0,
+            method='cash'
+        )
+
+        return order

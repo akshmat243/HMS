@@ -97,16 +97,10 @@ class PurchaseOrderView(ProtectedModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-
-    # agar role admin hai, sirf uska hi data dikhao
         if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
             return qs.filter(admin=user)
-
-    # agar superuser hai to sab dikhao
         if user.is_superuser:
             return qs
-
-    # kisi aur role ke liye kuch nahi
         return qs.none()
 
 class PurchaseOrderItemView(ProtectedModelViewSet):
