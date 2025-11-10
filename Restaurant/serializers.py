@@ -148,7 +148,17 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("User has no hotel assigned.")
 
         items_data = validated_data.pop('order_items', [])
+        table = validated_data.get("table")
+        
+        # ✅ Ensure table belongs to same hotel
+        if table and table.hotel != validated_data["hotel"]:
+            raise serializers.ValidationError("This table does not belong to your hotel.")
+        
         order = RestaurantOrder.objects.create(**validated_data)
+        
+        if table:
+            table.status = "occupied"
+            table.save(update_fields=["status"])
 
         for item in items_data:
             OrderItem.objects.create(order=order, **item)
@@ -157,13 +167,50 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         items_data = validated_data.pop('order_items', None)
+        old_status = instance.status
+        new_status = validated_data.get("status", old_status)
+        old_table = instance.table
+        new_table = validated_data.get("table", old_table)
 
-        # Update fields including table
+        # ✅ Prevent cross-hotel tampering
+        request = self.context.get("request")
+        user = request.user
+        user_hotel = getattr(user, "hotel_profile", None)
+        if user_hotel:
+            user_hotel = user_hotel.hotel
+        else:
+            user_hotel = getattr(user, "hotel", None)
+
+        if instance.hotel != user_hotel:
+            raise serializers.ValidationError("You cannot modify orders from another hotel.")
+
+        # ✅ If table changed, update statuses
+        if old_table != new_table:
+            if old_table:
+                old_table.status = "available"
+                old_table.save(update_fields=["status"])
+            if new_table:
+                new_table.status = "occupied"
+                new_table.save(update_fields=["status"])
+
+        # ✅ If status changed → update table status
+        if old_status != new_status:
+            if new_status in ["completed", "cancelled"]:
+                if new_table:
+                    new_table.status = "available"
+                    new_table.save(update_fields=["status"])
+
+            elif new_status in ["preparing", "served"]:
+                if new_table:
+                    new_table.status = "occupied"
+                    new_table.save(update_fields=["status"])
+
+        # ✅ Apply validated data
         for attr, val in validated_data.items():
             setattr(instance, attr, val)
-
         instance.save()
 
+        # ✅ Replace order items
         if items_data is not None:
             instance.order_items.all().delete()
             for item in items_data:
@@ -184,21 +231,46 @@ class TableReservationSerializer(serializers.ModelSerializer):
         read_only_fields = ['slug', 'created_at', 'status']
 
     def validate(self, data):
-        table = data.get('table')
-        date = data.get('reservation_date')
-        time = data.get('reservation_time')
+        table = data.get("table")
+        date = data.get("reservation_date")
+        time = data.get("reservation_time")
 
-        # Check for overlapping reservations
+        # ✅ Check table belongs to user's hotel
+        request = self.context.get("request")
+        user = request.user
+        hotel = getattr(user, "hotel_profile", None)
+        if hotel:
+            hotel = hotel.hotel
+        else:
+            hotel = getattr(user, "hotel", None)
+
+        if table.hotel != hotel:
+            raise serializers.ValidationError("This table does not belong to your hotel.")
+
+        # ✅ Check for overlapping reservations
         existing = TableReservation.objects.filter(
             table=table,
             reservation_date=date,
             reservation_time=time,
             status__in=['pending', 'confirmed']
         )
+
         if existing.exists():
-            raise serializers.ValidationError("This table is already reserved at the selected time.")
+            raise serializers.ValidationError("This table is already reserved at this time.")
 
         return data
+
+    def create(self, validated_data):
+        table = validated_data["table"]
+        reservation = TableReservation.objects.create(**validated_data)
+
+        # ✅ Mark table as reserved
+        table.status = "reserved"
+        table.save(update_fields=["status"])
+
+        return reservation
+
+
     
 class RestaurantDashboardSerializer(serializers.Serializer):
     available_tables = serializers.IntegerField()

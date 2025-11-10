@@ -136,6 +136,8 @@ class RestaurantOrder(models.Model):
             if rule.applies_to(subtotal): 
                 return rule 
         return None
+    
+    
     def save(self, *args, **kwargs):
         is_new = self._state.adding
 
