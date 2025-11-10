@@ -295,6 +295,17 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.get_full_name", read_only=True)
     booking_slug = serializers.CharField(source='booking.slug', read_only=True)
     room_slug = serializers.CharField(source='room.slug', read_only=True)
+    
+    # 🔹 Slug-based related fields
+    booking = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Booking.objects.all()
+    )
+    room = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Room.objects.all()
+    )
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
 
     class Meta:
         model = RoomServiceRequest
