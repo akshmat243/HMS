@@ -57,6 +57,7 @@ INSTALLED_APPS = [
 
     # social providers
     'allauth.socialaccount.providers.google',
+    # 'accounts.apps.AccountsConfig',
     
     'corsheaders',
     'drf_yasg',
