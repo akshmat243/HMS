@@ -126,6 +126,16 @@ class RestaurantOrder(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     status_updated_at = models.DateTimeField(null=True, blank=True)
 
+    def get_applicable_discount_rule(self):
+        """Return the active discount rule 
+            that matches subtotal."""
+        subtotal = self.subtotal or Decimal('0.00') 
+        applicable_rules = DiscountRule.objects.filter(is_active=True).order_by('-min_amount') 
+        
+        for rule in applicable_rules: 
+            if rule.applies_to(subtotal): 
+                return rule 
+        return None
     def save(self, *args, **kwargs):
         is_new = self._state.adding
 
