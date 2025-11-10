@@ -212,3 +212,9 @@ class TableReservationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This table is already reserved at the selected time.")
 
         return data
+    
+class RestaurantDashboardSerializer(serializers.Serializer):
+    available_tables = serializers.IntegerField()
+    active_orders = serializers.IntegerField()
+    todays_revenue = serializers.FloatField()
+    avg_wait_time = serializers.CharField()
