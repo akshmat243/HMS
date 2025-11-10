@@ -1,6 +1,7 @@
 from MBP.views import ProtectedModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from datetime import datetime
 from .models import (
     MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
 )
@@ -81,21 +82,85 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
         if user.is_superuser:
             return RestaurantOrder.objects.all().select_related('hotel', 'table')
 
-        # ✅ Hotel admin: Only own hotel’s data
+        # ✅ Hotel Admin (assigned hotel)
         hotel = getattr(user, 'hotel', None) or getattr(user, 'hotel_profile', None)
         if hotel:
-            # handle both if user.hotel or user.hotel_profile.hotel exists
             hotel_obj = getattr(hotel, 'hotel', hotel)
             return RestaurantOrder.objects.filter(hotel=hotel_obj).select_related('hotel', 'table')
 
-        # ✅ Other users (no hotel assigned): Empty set
+        # ✅ Staff assigned to a hotel
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return RestaurantOrder.objects.filter(hotel=user.staff_profile.hotel).select_related('hotel', 'table')
+
+        # ✅ Others
         return RestaurantOrder.objects.none()
 
     def get_serializer_context(self):
-        """Pass request into serializer for user-hotel linking."""
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+    
+    @action(detail=False, methods=['get'], url_path='today')
+    def today_orders(self, request):
+        today = date.today()
+
+        qs = self.get_queryset().filter(order_time__date=today)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "date": str(today),
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+    
+    @action(detail=False, methods=['get'], url_path='filter-by-date')
+    def filter_by_date(self, request):
+        date_str = request.query_params.get('date')
+
+        if not date_str:
+            return Response({"error": "date parameter is required (YYYY-MM-DD)"}, status=400)
+
+        try:
+            filter_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format"}, status=400)
+
+        qs = self.get_queryset().filter(order_time__date=filter_date)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "date": date_str,
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+
+    @action(detail=False, methods=['get'], url_path='filter-by-month')
+    def filter_by_month(self, request):
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+
+        if not year or not month:
+            return Response({"error": "year and month parameters are required"}, status=400)
+
+        try:
+            year = int(year)
+            month = int(month)
+        except ValueError:
+            return Response({"error": "year and month must be integers"}, status=400)
+
+        qs = self.get_queryset().filter(
+            order_time__year=year,
+            order_time__month=month
+        )
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "year": year,
+            "month": month,
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):
