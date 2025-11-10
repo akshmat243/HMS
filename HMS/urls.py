@@ -52,6 +52,8 @@ urlpatterns = [
     path('', include('Reviews.urls')),
     path('', include('staff.urls')),
     
+    path('', include('inventory.urls')),
+    
     
     
     # Swagger & Redoc URLs

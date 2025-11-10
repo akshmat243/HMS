@@ -91,6 +91,7 @@ class StaffSerializer(serializers.ModelSerializer):
             # ✅ If end time is earlier than start, assume it’s the next day (overnight)
             if end_dt <= start_dt:
                 end_dt += timedelta(days=1)
+                
         if salary < 0:
             raise serializers.ValidationError({"monthly_salary": "Monthly salary cannot be negative."})
         return data

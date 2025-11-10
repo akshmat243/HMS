@@ -242,19 +242,19 @@ class BookingSerializer(serializers.ModelSerializer):
             Guest.objects.create(booking=booking, **guest)
             
         # ✅ Auto-generate invoice for this booking
-        content_type = ContentType.objects.get_for_model(booking)
+        content_type = ContentType.objects.get_for_model(Booking)
         invoice = Invoice.objects.create(
             content_type=content_type,
             object_id=booking.id,
             issued_to=booking.user,
-            total_amount=booking.room.price,
+            total_amount=booking.room.price_per_night,
             status='unpaid'
         )
         InvoiceItem.objects.create(
             invoice=invoice,
-            description=f"Room Booking - {booking.room.name}",
+            description=f"Room Booking - {booking.room.room_number}",
             quantity=1,
-            unit_price=booking.room.price
+            unit_price=booking.room.price_per_night
         )
         
         return booking
@@ -295,6 +295,17 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.get_full_name", read_only=True)
     booking_slug = serializers.CharField(source='booking.slug', read_only=True)
     room_slug = serializers.CharField(source='room.slug', read_only=True)
+    
+    # 🔹 Slug-based related fields
+    booking = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Booking.objects.all()
+    )
+    room = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Room.objects.all()
+    )
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
 
     class Meta:
         model = RoomServiceRequest
