@@ -255,12 +255,13 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
         available_tables = tables.filter(status='available').count()
 
         # ✅ 2. Active Orders
+        today = date.today()
         active_orders = orders.filter(
+            order_time__date=today,
             status__in=['pending', 'preparing', 'served']
         ).count()
 
         # ✅ 3. Today's Revenue (from order totals, not payments)
-        today = date.today()
         todays_revenue = (
             orders.filter(
                 order_time__date=today,
