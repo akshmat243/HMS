@@ -207,11 +207,12 @@ class BookingSerializer(serializers.ModelSerializer):
     )
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     guests = GuestSerializer(many=True, required=True)
+    room_number = serializers.CharField(source="room.room_number", read_only=True)
 
     class Meta:
         model = Booking
         fields = '__all__'
-        read_only_fields = ['created_at', 'booking_code', 'slug', 'check_in_time', 'check_out_time']
+        read_only_fields = ['created_at', 'booking_code', 'slug', 'check_in_time', 'check_out_time', 'room_number']
 
     def validate(self, data):
         check_in = data.get('check_in', self.instance.check_in if self.instance else None)
@@ -238,6 +239,12 @@ class BookingSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         guests_data = validated_data.pop('guests', [])
         booking = Booking.objects.create(**validated_data)
+        if booking.room.is_available:
+            booking.room.is_available = False
+            booking.room.save(update_fields=['is_available'])
+        else:
+            # Optional: raise error or handle room unavailability here if needed
+            pass
         for guest in guests_data:
             Guest.objects.create(booking=booking, **guest)
             
