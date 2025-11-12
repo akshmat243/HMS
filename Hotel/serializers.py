@@ -239,12 +239,9 @@ class BookingSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         guests_data = validated_data.pop('guests', [])
         booking = Booking.objects.create(**validated_data)
-        if booking.room.is_available:
-            booking.room.is_available = False
-            booking.room.save(update_fields=['is_available'])
-        else:
-            # Optional: raise error or handle room unavailability here if needed
-            pass
+        room = booking.room
+        room.is_available = False
+        room.save(update_fields=['is_available'])
         for guest in guests_data:
             Guest.objects.create(booking=booking, **guest)
             

@@ -215,6 +215,9 @@ class Booking(models.Model):
             self.slug = slugify(self.booking_code)
 
         super().save(*args, **kwargs)
+        if self.status == "checked_out" and self.room:
+            self.room.is_available = True
+            self.room.save(update_fields=["is_available"])
         
         
 class Guest(models.Model):
