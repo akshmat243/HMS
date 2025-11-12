@@ -362,5 +362,43 @@ class RoomServiceRequest(models.Model):
         total = self.calculate_cost()
         self.total_cost = total
         self.cost = total
-
+        is_new = self._state.adding  # Check if this is a new instance
         super().save(*args, **kwargs)
+        
+        # ✅ Auto-create invoice if new and no existing invoice linked
+        from Billing.models import Invoice, InvoiceItem
+        from django.contrib.contenttypes.models import ContentType
+        if is_new:
+            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
+            invoice = Invoice.objects.create(
+                content_type=content_type,
+                object_id=self.id,
+                issued_to=self.user,
+                total_amount=self.total_cost,
+                status='unpaid'
+            )
+
+            InvoiceItem.objects.create(
+                invoice=invoice,
+                description=f"Room Service - {self.service_type.title()} ({self.room.room_number})",
+                quantity=1,
+                unit_price=self.total_cost,
+            )
+        
+        if not self._state.adding:
+
+             # Update linked invoice if exists
+            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
+            invoice = Invoice.objects.filter(content_type=content_type, object_id=self.id).first()
+
+            if invoice:
+                invoice.total_amount = self.total_cost
+                invoice.save(update_fields=["total_amount"])
+
+                invoice.items.all().delete()
+                InvoiceItem.objects.create(
+                    invoice=invoice,
+                    description=f"Updated Room Service - {self.service_type.title()}",
+                    quantity=1,
+                    unit_price=self.total_cost,
+                )
