@@ -164,25 +164,6 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
 
         for item in items_data:
             OrderItem.objects.create(order=order, **item)
-        
-        # ✅ AUTO-GENERATE INVOICE FOR RESTAURANT ORDER (Same style as Booking)
-        content_type = ContentType.objects.get_for_model(RestaurantOrder)
-
-        invoice = Invoice.objects.create(
-            content_type=content_type,
-            object_id=order.id,
-            issued_to=user,
-            total_amount=order.grand_total,
-            status='unpaid'
-        )
-
-        InvoiceItem.objects.create(
-            invoice=invoice,
-            description=f"Restaurant Order - {order.order_code}",
-            quantity=1,
-            unit_price=order.grand_total
-        )
-
 
         return order
 
@@ -237,36 +218,33 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
             for item in items_data:
                 OrderItem.objects.create(order=instance, **item)
                 
-        content_type = ContentType.objects.get_for_model(RestaurantOrder)
+        if new_status == "served":
+            from django.contrib.contenttypes.models import ContentType
+            content_type = ContentType.objects.get_for_model(RestaurantOrder)
 
-        # ✅ Fetch invoice for the order
-        invoice = Invoice.objects.filter(
-            content_type=content_type,
-            object_id=instance.id
-        ).first()
-
-        # ✅ If invoice doesn't exist → create fallback invoice
-        if invoice is None:
-            invoice = Invoice.objects.create(
+            invoice, created = Invoice.objects.get_or_create(
                 content_type=content_type,
                 object_id=instance.id,
-                issued_to=user,
-                total_amount=instance.grand_total,
-                status='unpaid'
+                defaults={
+                    "issued_to": user,
+                    "total_amount": instance.grand_total,
+                    "status": "unpaid",
+                },
             )
 
-        # ✅ Update invoice total
-        invoice.total_amount = instance.grand_total
-        invoice.save(update_fields=["total_amount"])
+            # ✅ If invoice already exists → update it
+            if not created:
+                invoice.total_amount = instance.grand_total
+                invoice.save(update_fields=["total_amount"])
+                invoice.items.all().delete()
 
-        # ✅ Replace Invoice Items
-        invoice.items.all().delete()
-        InvoiceItem.objects.create(
-            invoice=invoice,
-            description=f"Restaurant Order - {instance.order_code}",
-            quantity=1,
-            unit_price=instance.grand_total
-        )
+            # ✅ Add invoice item
+            InvoiceItem.objects.create(
+                invoice=invoice,
+                description=f"Restaurant Order - {instance.order_code}",
+                quantity=1,
+                unit_price=instance.grand_total,
+            )
 
         return instance
 
