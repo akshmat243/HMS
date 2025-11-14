@@ -112,7 +112,7 @@ class RoomSerializer(serializers.ModelSerializer):
                 else:
                     raise serializers.ValidationError("Superuser must specify a hotel.")
         
-        elif hasattr(user, 'role') and user.role == 'admin':
+        elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
             data['hotel'] = getattr(user, 'hotel', None)
             if not data['hotel']:
                 raise serializers.ValidationError("You are not assigned to any hotel.")
@@ -187,7 +187,7 @@ class GuestSerializer(serializers.ModelSerializer):
         read_only_fields = ['slug', 'created_at']
 
     def get_age(self, obj):
-        if hasattr(obj, 'date_of_birth') and obj.date_of_birth:
+        if hasattr(obj, 'date_of_birth' ) and obj.date_of_birth:
             today = date.today()
             return today.year - obj.date_of_birth.year - (
                 (today.month, today.day) < (obj.date_of_birth.month, obj.date_of_birth.day)
