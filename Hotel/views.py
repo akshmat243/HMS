@@ -684,3 +684,65 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
     #     )
     #     return Response({item['status']: item['total'] for item in summary}, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        user = request.user
+        today = date.today()
+
+        # Base QuerySet for Laundry services
+        laundry_qs = RoomServiceRequest.objects.filter(service_type='laundry')
+
+        # ✅ Role-based filtering
+        if not user.is_superuser:
+            if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+                laundry_qs = laundry_qs.filter(room__hotel__owner=user)
+            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+                laundry_qs = laundry_qs.filter(room__hotel=user.staff_profile.hotel)
+            else:
+                return Response(
+                    {"error": "You are not associated with any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # ✅ Optional filter by hotel slug
+        hotel_slug = request.query_params.get("hotel")
+        if hotel_slug:
+            laundry_qs = laundry_qs.filter(room__hotel__slug=hotel_slug)
+
+        # ✅ Filter today’s orders
+        todays_orders = laundry_qs.filter(requested_at__date=today)
+
+        total_today = todays_orders.count()
+        in_progress = todays_orders.filter(status='in_progress').count()
+        ready_for_delivery = todays_orders.filter(status='ready').count()
+        express_orders = todays_orders.filter(priority='express').count()
+
+        # ✅ Calculate growth % (vs yesterday)
+        from datetime import timedelta
+        yesterday_orders = laundry_qs.filter(requested_at__date=today - timedelta(days=1)).count()
+
+        def growth(today, yesterday):
+            if yesterday == 0:
+                return "+0%"
+            change = ((today - yesterday) / yesterday) * 100
+            sign = "+" if change >= 0 else "-"
+            return f"{sign}{abs(round(change, 1))}%"
+
+        return Response({
+            "orders_today": {
+                "count": total_today,
+                "growth": growth(total_today, yesterday_orders)
+            },
+            "in_progress": {
+                "count": in_progress,
+                "growth": growth(in_progress, 0)  # Can later compute by comparing historic data
+            },
+            "ready_for_delivery": {
+                "count": ready_for_delivery,
+                "growth": growth(ready_for_delivery, 0)
+            },
+            "express_orders": {
+                "count": express_orders,
+                "growth": growth(express_orders, 0)
+            },
+        })
