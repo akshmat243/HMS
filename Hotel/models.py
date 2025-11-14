@@ -216,8 +216,9 @@ class Booking(models.Model):
 
         super().save(*args, **kwargs)
         if self.status == "checked_out" and self.room:
-            self.room.is_available = True
-            self.room.save(update_fields=["is_available"])
+            self.room.status = "available"
+            self.room.save()
+
         
         
 class Guest(models.Model):
