@@ -240,8 +240,9 @@ class BookingSerializer(serializers.ModelSerializer):
         guests_data = validated_data.pop('guests', [])
         booking = Booking.objects.create(**validated_data)
         room = booking.room
-        room.is_available = False
-        room.save(update_fields=['is_available'])
+        room.status = "available"
+        room.save()
+
         for guest in guests_data:
             Guest.objects.create(booking=booking, **guest)
             
@@ -268,6 +269,14 @@ class BookingSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+        
+        if instance.status == 'cancelled' and instance.room:
+            instance.room.status = "available"
+            instance.room.save()
+        
+        if instance.status == 'confirmed' and instance.room:
+            instance.room.status = "reserved"
+            instance.room.save()
 
         if guests_data is not None:
             instance.guests.all().delete()  # clear old guests

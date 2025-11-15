@@ -481,12 +481,12 @@ class BookingViewSet(ProtectedModelViewSet):
         if not booking.room:
             return Response({"error": "No room assigned to this booking."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not booking.room.is_available:
+        if not booking.room.status == "reserved":
             return Response({"error": "Room is already occupied or unavailable."}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Update room and booking
-        booking.room.is_available = False
-        booking.room.save(update_fields=['is_available'])
+        booking.room.status = "occupied"
+        booking.room.save(update_fields=['status'])
 
         booking.status = 'checked_in'
         booking.check_in_time = timezone.now()
@@ -516,8 +516,8 @@ class BookingViewSet(ProtectedModelViewSet):
             return Response({"error": "No room assigned to this booking."}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Update room and booking
-        booking.room.is_available = True
-        booking.room.save(update_fields=['is_available'])
+        # booking.room.is_available = True
+        # booking.room.save(update_fields=['is_available'])
 
         booking.status = 'checked_out'
         booking.check_out_time = timezone.now()
