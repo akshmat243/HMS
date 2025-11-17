@@ -229,6 +229,7 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
                     "issued_to": user,
                     "total_amount": instance.grand_total,
                     "status": "unpaid",
+                    "customer_name": instance.guest_name,
                 },
             )
 

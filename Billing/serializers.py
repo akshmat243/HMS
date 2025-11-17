@@ -36,9 +36,6 @@ class InvoiceSerializer(serializers.ModelSerializer):
     items = InvoiceItemSerializer(many=True, required=False)
     payments = PaymentSerializer(many=True, required=False)
     balance_due = serializers.SerializerMethodField()
-    
-    issued_to_name = serializers.CharField(source="issued_to.full_name", read_only=True)
-
 
     def get_balance_due(self, obj):
         return max(obj.total_amount - obj.amount_paid, 0)
@@ -46,7 +43,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = '__all__'
-        read_only_fields = ('id', 'slug', 'issued_at', 'status', 'invoice_to_name')
+        read_only_fields = ('id', 'slug', 'issued_at', 'status')
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])

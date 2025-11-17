@@ -252,6 +252,7 @@ class BookingSerializer(serializers.ModelSerializer):
             content_type=content_type,
             object_id=booking.id,
             issued_to=booking.user,
+            customer_name=f"{booking.guests.first().first_name} {booking.guests.first().last_name}",
             total_amount=booking.room.price_per_night,
             status='unpaid'
         )
@@ -309,6 +310,8 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
     booking_slug = serializers.CharField(source='booking.slug', read_only=True)
     room_slug = serializers.CharField(source='room.slug', read_only=True)
     
+    booking_guest_name = serializers.SerializerMethodField()
+    
     # 🔹 Slug-based related fields
     booking = serializers.SlugRelatedField(
         slug_field='slug',
@@ -328,13 +331,20 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
             'service_type', 'service_type_display', 'description',
             'priority', 'priority_display', 'status', 'status_display',
             'cost', 'base_cost', 'total_cost',
-            'requested_at', 'pickup_time', 'delivery_time', 'is_resolved',
+            'requested_at', 'pickup_time', 'delivery_time', 'is_resolved', 'booking_guest_name',
         ]
         read_only_fields = [
             'id', 'service_code', 'slug', 'status_display', 'priority_display', 'service_type_display',
             'base_cost', 'cost', 'total_cost', 'room_number', 'hotel_name', 'user_name', 'requested_at',
-            'booking_slug', 'room_slug'
+            'booking_slug', 'room_slug', 'booking_guest_name'
         ]
+
+    def get_booking_guest_name(self, obj):
+        guests = obj.booking.guests.all()
+        if guests.exists():
+            g = guests.first()
+            return f"{g.first_name} {g.last_name}".strip()
+        return None
 
     # Validate JSON field and all business rules
     def validate_description(self, value):
