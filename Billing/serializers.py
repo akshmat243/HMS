@@ -36,9 +36,34 @@ class InvoiceSerializer(serializers.ModelSerializer):
     items = InvoiceItemSerializer(many=True, required=False)
     payments = PaymentSerializer(many=True, required=False)
     balance_due = serializers.SerializerMethodField()
+    #issued_to_name = serializers.SerializerMethodField()
+    issued_to = serializers.CharField(source="issued_to.full_name", read_only=True)
+
 
     def get_balance_due(self, obj):
         return max(obj.total_amount - obj.amount_paid, 0)
+    
+    # def get_issued_to_name(self, obj):
+    #     related = obj.related_object
+
+    #     # CASE 1 → Booking Invoice → Guest name
+    #     if related:
+    #     # If related object has guests (Booking model)
+    #         if hasattr(related, "guests"):
+    #             guest = related.guests.first()
+    #             if guest:
+    #                 return f"{guest.first_name} {guest.last_name or ''}".strip()
+
+    #     # If Booking model has user (fallback)
+    #         if hasattr(related, "user"):
+    #             return related.user.full_name or related.user.email
+
+    #     # CASE 2 → Default: issued_to user name
+    #     if obj.issued_to:
+    #         return obj.issued_to.full_name or obj.issued_to.email
+
+    #     return None
+
 
     class Meta:
         model = Invoice
