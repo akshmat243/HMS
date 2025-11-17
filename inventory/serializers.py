@@ -167,6 +167,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             content_type=content_type,
             object_id=order.id,
             issued_to=admin_user,
+            customer_name=order.admin.full_name,
             total_amount=total_amount,
             amount_paid=0,
             status='unpaid'

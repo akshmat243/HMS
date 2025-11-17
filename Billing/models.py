@@ -25,12 +25,33 @@ class Invoice(models.Model):
     related_object = GenericForeignKey('content_type', 'object_id')
 
     issued_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='issued_invoices')
+    customer_name=models.CharField(max_length=50)
     issued_at = models.DateTimeField(auto_now_add=True)
     due_date = models.DateField(default=timezone.now)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
     notes = models.TextField(blank=True)
+
+    ''' @property
+    def issued_to_name(self):
+        # If related object exists
+        obj = self.related_object
+
+        if obj:
+            # CASE 1: Booking Invoice → return guest name
+            if hasattr(obj, 'guests'):   # Booking model ka signature
+                # Agar multiple guests hain to first ka name return
+                guest = obj.guests.first()
+                if guest:
+                    return guest.name
+
+        # CASE 2: Default → issued_to user ka full name
+        if self.issued_to:
+            return self.issued_to.get_full_name() or self.issued_to.username
+
+        return None'''
+
 
     def save(self, *args, **kwargs):
         if not self.slug:
