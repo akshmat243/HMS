@@ -8,7 +8,11 @@ from .models import Invoice, InvoiceItem, Payment
 from .serializers import InvoiceSerializer, InvoiceItemSerializer, PaymentSerializer
 
 class InvoiceViewSet(ProtectedModelViewSet):
-    queryset = Invoice.objects.select_related('issued_to').prefetch_related('content_type')
+    # queryset = Invoice.objects.select_related('issued_to').prefetch_related('content_type')
+    def get_queryset(self):
+        user = self.request.user
+        return Invoice.objects.filter(issued_to=user).select_related('issued_to', 'content_type')
+    
     serializer_class = InvoiceSerializer
     model_name = 'Invoice'
     lookup_field = 'slug'
