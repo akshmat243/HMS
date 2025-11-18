@@ -83,6 +83,25 @@ class UserViewSet(ProtectedModelViewSet):
         except Role.DoesNotExist:
             return Response({"error": "Role not found."}, status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=False, methods=['delete'], url_path='delete-my-users')
+    def delete_my_users(self, request):
+        user = request.user
+
+        # SUPERUSER — can delete all normal users
+        if user.is_superuser:
+            deleted, _ = User.objects.exclude(is_superuser=True).delete()
+            return Response({"message": f"Deleted {deleted} users"}, status=200)
+
+        # HOTEL ADMIN — delete users created by him
+        if hasattr(user, 'role') and user.role.name.lower() == "admin":
+            deleted, _ = User.objects.filter(created_by=user).delete()
+            return Response({"message": f"Deleted {deleted} users created by you"}, status=200)
+
+        return Response(
+            {"error": "You do not have permission to delete users."},
+            status=403
+        )
+        
 from django.core.cache import cache
 
 class RegisterView(APIView):

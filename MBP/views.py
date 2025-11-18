@@ -18,6 +18,7 @@ import psutil
 from django.utils.timesince import timesince
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from rest_framework import serializers
 
 User = get_user_model()
 
@@ -85,6 +86,54 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
     serializer_class = RoleModelPermissionSerializer
     model_name = 'RoleModelPermission'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Superuser → Full access
+        if user.is_superuser:
+            return super().get_queryset()
+
+        # Hotel admin → Can manage permissions only for roles under his hotel
+        if getattr(user, "role", None) and user.role.name.lower() == "admin":
+            return RoleModelPermission.objects.filter(
+                role__hotel=user.hotel  # <-- Only his hotel roles
+            )
+
+        # Others: No access
+        return RoleModelPermission.objects.none()
+    
+    def create(self, validated_data):
+        user = self.context["request"].user
+
+        if not user.is_superuser:
+            if user.role.name.lower() != "admin":
+                raise serializers.ValidationError("You cannot create roles.")
+            validated_data["hotel"] = user.hotel  # Force hotel admin's hotel
+
+        return super().create(validated_data)
+
+    
+    @action(detail=False, methods=["post"], url_path="bulk-assign")
+    def bulk_assign(self, request):
+        permissions = request.data.get("permissions", [])
+
+        created = []
+        errors = []
+
+        for perm_data in permissions:
+            serializer = self.get_serializer(data=perm_data)
+
+            if serializer.is_valid():
+                serializer.save()
+                created.append(serializer.data)
+            else:
+                errors.append(serializer.errors)
+
+        return Response({
+            "created": created,
+            "errors": errors
+        })
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

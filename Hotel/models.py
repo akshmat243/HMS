@@ -409,23 +409,27 @@ class RoomServiceRequest(models.Model):
         is_new = self._state.adding
 
         # call original save
-        super().save(*args, **kwargs)
-
         from .models import RoomServiceStage  # avoid circular import
 
         # If new → create pending stage
         if is_new:
             RoomServiceStage.objects.create(
                 service=self,
-                stage='pending'
+                stage='collection'
             )
         else:
             # detect status change
             old = RoomServiceRequest.objects.filter(pk=self.pk).first()
             if old and old.status != self.status:
+                stage_map = {
+                    "pending": "collection",
+                    "in_progress": "washing",
+                    "ready": "quality_check",
+                    "delivered": "delivery",
+                }
                 RoomServiceStage.objects.create(
                     service=self,
-                    stage=self.status
+                    stage=stage_map.get(self.status, "collection")
                 )
 
 class RoomServiceStage(models.Model):
