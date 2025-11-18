@@ -6,6 +6,12 @@ from django.utils import timezone
 from MBP.views import ProtectedModelViewSet
 from .models import Invoice, InvoiceItem, Payment
 from .serializers import InvoiceSerializer, InvoiceItemSerializer, PaymentSerializer
+import openpyxl
+from openpyxl.styles import Font, Alignment
+from django.http import HttpResponse
+from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
+
 
 class InvoiceViewSet(ProtectedModelViewSet):
     # queryset = Invoice.objects.select_related('issued_to').prefetch_related('content_type')
@@ -39,6 +45,105 @@ class InvoiceViewSet(ProtectedModelViewSet):
 
         serializer = self.get_serializer(invoice)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['get'], url_path='summary')
+    def invoice_summary(self, request):
+        user = request.user
+        
+        # Content type to EXCLUDE
+        exclude_ct = ContentType.objects.get(app_label='inventory', model='purchaseorder')
+
+        # TOTAL INVOICES (issued_to user)
+        total_invoices = Invoice.objects.filter(issued_to=user).count()
+
+        # PENDING
+        pending_invoices = Invoice.objects.filter(
+            issued_to=user,
+            status='unpaid'
+        ).count()
+
+        # OVERDUE
+        overdue_invoices = Invoice.objects.filter(
+            issued_to=user,
+            status='unpaid',
+            due_date__lt=timezone.now().date()
+        ).count()
+
+        # ⭐ TOTAL REVENUE = sum of paid invoice amounts EXCEPT inventory purchase order invoices
+        total_revenue = Invoice.objects.filter(
+            status='paid'
+        ).exclude(
+            content_type=exclude_ct
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        return Response({
+            "total_revenue": float(total_revenue),
+            "total_invoices": total_invoices,
+            "pending_invoices": pending_invoices,
+            "overdue_invoices": overdue_invoices
+        })
+    
+    @action(detail=False, methods=['post'], url_path='export')
+    def export_invoices(self, request):
+        start_date = request.data.get("start_date")
+        end_date = request.data.get("end_date")
+
+        if not start_date or not end_date:
+            return Response({"error": "start_date and end_date are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Filter invoices
+        invoices = Invoice.objects.filter(
+            issued_at__date__gte=start_date,
+            issued_at__date__lte=end_date
+        ).order_by('-issued_at')
+
+        # Create workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Invoices"
+
+        # Header row
+        headers = [
+            "Invoice No", "Customer Name", "Issued Date",
+            "Due Date", "Total Amount", "Amount Paid", "Status"
+        ]
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")
+
+        # Insert invoice data
+        for row, invoice in enumerate(invoices, start=2):
+            ws.cell(row=row, column=1, value=invoice.slug)
+            ws.cell(row=row, column=2, value=invoice.customer_name)
+            ws.cell(row=row, column=3, value=str(invoice.issued_at.date()))
+            ws.cell(row=row, column=4, value=str(invoice.due_date))
+            ws.cell(row=row, column=5, value=float(invoice.total_amount))
+            ws.cell(row=row, column=6, value=float(invoice.amount_paid))
+            ws.cell(row=row, column=7, value=invoice.status)
+
+        # Prepare response
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response['Content-Disposition'] = f'attachment; filename="invoices_{start_date}_to_{end_date}.xlsx"'
+
+        wb.save(response)
+        return response
+
+    @action(detail=False, methods=['get'], url_path='recent-invoices')
+    def recent_invoices(self, request):
+        today = timezone.now().date()
+        
+        invoices = Invoice.objects.filter(
+            issued_at__date=today
+        ).order_by('-issued_at')
+
+        serializer = self.get_serializer(invoices, many=True)
+        return Response(serializer.data)
+
 
 
 class InvoiceItemViewSet(ProtectedModelViewSet):
