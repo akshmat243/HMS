@@ -36,42 +36,32 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    
-    role = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Role.objects.all()
-    )
-    
-    password = serializers.CharField(write_only=True, required=False)
+
     role_slug = serializers.SlugField(write_only=True, required=False)
-    role = serializers.SerializerMethodField(read_only=True)
+    role_name = serializers.CharField(source="role.name", read_only=True)
+
+    password = serializers.CharField(write_only=True, required=False)
+
     created_by = serializers.SerializerMethodField(read_only=True)
-    
-    status = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'full_name', 'slug', 'password', 'phone',
-            'role_slug', 'role', 'is_active', 'date_joined', 'created_by',
-            'status'
+            "id", "email", "full_name", "slug", "phone",
+            "password", "role_slug", "role_name",
+            "is_active", "date_joined", "created_by"
         ]
-        read_only_fields = ['id', 'date_joined', 'created_by', 'role']
-
-    def get_role(self, obj):
-        return obj.role.name if obj.role else None
+        read_only_fields = ["id", "date_joined", "created_by", "role_name"]
 
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
 
     def create(self, validated_data):
-        request = self.context.get("request")  # ✅ Get the request object
-        creator = getattr(request, "user", None)  # current logged-in user
-        
-        password = validated_data.pop('password', None)
-        role_slug = validated_data.pop('role_slug', None)
-        
-        validated_data.pop('status', None)
+        request = self.context.get("request")
+        creator = getattr(request, "user", None)
+
+        password = validated_data.pop("password", None)
+        role_slug = validated_data.pop("role_slug", None)
 
         role = None
         if role_slug:
@@ -83,38 +73,30 @@ class UserSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         if creator and creator.is_authenticated:
             user.created_by = creator
-            
+
         if password:
             user.set_password(password)
+
         if role:
             user.role = role
-        user.is_active = True
+
         user.save()
         return user
 
     def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
-        role_slug = validated_data.pop('role_slug', None)
-        
-        status = validated_data.pop('status', None)
-        
-        if status is not None:
-            # Normalize and check the value
-            status_lower = status.lower()
-            if status_lower == 'active':
-                instance.is_active = True
-            elif status_lower == 'inactive':
-                instance.is_active = False
-            else:
-                # Raise a validation error for invalid input
-                raise serializers.ValidationError({"status": "Invalid status value. Must be 'active' or 'inactive'."})
 
+        password = validated_data.pop("password", None)
+        role_slug = validated_data.pop("role_slug", None)
+
+        # Update all normal fields including is_active
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
+        # Update password
         if password:
             instance.set_password(password)
 
+        # Update role
         if role_slug:
             try:
                 role = Role.objects.get(slug=role_slug)
