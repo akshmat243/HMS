@@ -73,12 +73,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         invoice = Invoice.objects.create(**validated_data)
-        total = 0
+        # total = 0
         for item_data in items_data:
             item_data['invoice'] = invoice
             item = InvoiceItem.objects.create(**item_data)
             total += item.amount
-        invoice.total_amount = total
+        # invoice.total_amount = total
         invoice.save()
         return invoice
 

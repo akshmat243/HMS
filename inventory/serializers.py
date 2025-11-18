@@ -50,6 +50,9 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=Supplier.objects.all()
     )
+
+    supplier_name=serializers.CharField(source="supplier.name",read_only=True)
+    category_name=serializers.CharField(source="category.name",read_only=True)
     class Meta:
         model = InventoryItem
         fields = '__all__'
