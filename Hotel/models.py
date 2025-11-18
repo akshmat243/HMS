@@ -406,3 +406,50 @@ class RoomServiceRequest(models.Model):
                     quantity=1,
                     unit_price=self.total_cost,
                 )
+        is_new = self._state.adding
+
+        # call original save
+        super().save(*args, **kwargs)
+
+        from .models import RoomServiceStage  # avoid circular import
+
+        # If new → create pending stage
+        if is_new:
+            RoomServiceStage.objects.create(
+                service=self,
+                stage='pending'
+            )
+        else:
+            # detect status change
+            old = RoomServiceRequest.objects.filter(pk=self.pk).first()
+            if old and old.status != self.status:
+                RoomServiceStage.objects.create(
+                    service=self,
+                    stage=self.status
+                )
+
+class RoomServiceStage(models.Model):
+    STAGE_CHOICES = [
+        ("collection", "Collection"),
+        ("sorting", "Sorting"),
+        ("washing", "Washing"),
+        ("drying", "Drying"),
+        ("pressing", "Pressing"),
+        ("quality_check", "Quality Check"),
+        ("delivery", "Delivery"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    service = models.ForeignKey(
+        RoomServiceRequest,
+        on_delete=models.CASCADE,
+        related_name="stages"
+    )
+    stage = models.CharField(max_length=50, choices=STAGE_CHOICES)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timestamp']
+
+    def __str__(self):
+        return f"{self.service.service_code} - {self.stage}"

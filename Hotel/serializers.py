@@ -240,7 +240,7 @@ class BookingSerializer(serializers.ModelSerializer):
         guests_data = validated_data.pop('guests', [])
         booking = Booking.objects.create(**validated_data)
         room = booking.room
-        room.status = "available"
+        room.status = "reserved"
         room.save()
 
         for guest in guests_data:
@@ -368,3 +368,24 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
             if not items:
                 raise serializers.ValidationError("Laundry service must specify at least one item.")
         return attrs
+    
+    def validate_status(self, new_status):
+        instance = self.instance
+        if not instance:
+            return new_status  # new request
+
+        allowed = {
+            "pending": ["in_progress", "hold"],
+            "in_progress": ["quality_check", "ready", "hold"],
+            "quality_check": ["ready", "hold"],
+            "ready": ["delivered", "hold"],
+            "hold": ["in_progress"],
+            "delivered": []
+        }
+
+        old_status = instance.status
+        if new_status not in allowed.get(old_status, []):
+            raise serializers.ValidationError(
+                f"Cannot move from {old_status} → {new_status}."
+            )
+        return new_status

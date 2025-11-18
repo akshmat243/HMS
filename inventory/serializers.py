@@ -91,7 +91,12 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 # purchase order
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     total_cost = serializers.ReadOnlyField()
-    order = serializers.PrimaryKeyRelatedField(read_only=True)
+    # order = serializers.PrimaryKeyRelatedField(read_only=True)
+    order = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=PurchaseOrder.objects.all()
+    )
+
     item = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=InventoryItem.objects.all()

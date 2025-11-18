@@ -746,3 +746,19 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
                 "growth": growth(express_orders, 0)
             },
         })
+
+    @action(detail=True, methods=['get'], url_path='timeline')
+    def timeline(self, request, slug=None):
+        service = self.get_object()
+
+        data = [
+            {
+                "stage": stage.get_stage_display(),
+                "time": stage.timestamp.strftime("%I:%M %p"),
+                "timestamp": stage.timestamp
+            }
+            for stage in service.stages.all()
+        ]
+
+        return Response(data)
+
