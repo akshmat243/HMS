@@ -46,12 +46,15 @@ class UserSerializer(serializers.ModelSerializer):
     role_slug = serializers.SlugField(write_only=True, required=False)
     role = serializers.SerializerMethodField(read_only=True)
     created_by = serializers.SerializerMethodField(read_only=True)
+    
+    status = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'full_name', 'slug', 'password', 'phone',
-            'role_slug', 'role', 'is_active', 'date_joined', 'created_by'
+            'role_slug', 'role', 'is_active', 'date_joined', 'created_by',
+            'status'
         ]
         read_only_fields = ['id', 'date_joined', 'created_by', 'role']
 
@@ -67,6 +70,8 @@ class UserSerializer(serializers.ModelSerializer):
         
         password = validated_data.pop('password', None)
         role_slug = validated_data.pop('role_slug', None)
+        
+        validated_data.pop('status', None)
 
         role = None
         if role_slug:
@@ -90,6 +95,19 @@ class UserSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
         role_slug = validated_data.pop('role_slug', None)
+        
+        status = validated_data.pop('status', None)
+        
+        if status is not None:
+            # Normalize and check the value
+            status_lower = status.lower()
+            if status_lower == 'active':
+                instance.is_active = True
+            elif status_lower == 'inactive':
+                instance.is_active = False
+            else:
+                # Raise a validation error for invalid input
+                raise serializers.ValidationError({"status": "Invalid status value. Must be 'active' or 'inactive'."})
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
