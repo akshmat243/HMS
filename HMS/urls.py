@@ -53,6 +53,8 @@ urlpatterns = [
     path('', include('staff.urls')),
     
     path('', include('inventory.urls')),
+    path('', include('maintenance.urls')),
+
     
     
     
