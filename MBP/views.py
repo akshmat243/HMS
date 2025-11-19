@@ -114,16 +114,30 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
         return super().create(validated_data)
 
     
-    @action(detail=False, methods=["post"], url_path="bulk-assign")
-    def bulk_assign(self, request):
+    # @action(detail=False, methods=["post"], url_path="bulk-assign")
+    # def bulk_assign(self, request):
+
         permissions = request.data.get("permissions", [])
 
         created = []
+        duplicates = []
         errors = []
 
         for perm_data in permissions:
-            serializer = self.get_serializer(data=perm_data)
+            # Check if already exists BEFORE serializer validation
+            role = perm_data.get("role")
+            model = perm_data.get("model")
+            permission_type = perm_data.get("permission_type")
 
+            if RoleModelPermission.objects.filter(
+                role__slug=role,
+                model__slug=model,
+                permission_type__slug=permission_type
+            ).exists():
+                duplicates.append(perm_data)
+                continue   # SKIP
+
+            serializer = self.get_serializer(data=perm_data, context={"request": request})
             if serializer.is_valid():
                 serializer.save()
                 created.append(serializer.data)
@@ -132,6 +146,46 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
 
         return Response({
             "created": created,
+            "duplicates": duplicates,
+            "errors": errors,
+        })
+
+    @action(detail=False, methods=["post"], url_path="bulk-assign")
+    def bulk_assign(self, request):
+        permissions = request.data.get("permissions", [])
+
+        created = []
+        skipped = []
+        errors = []
+
+        for perm_data in permissions:
+            role_slug = perm_data.get("role")
+            model_slug = perm_data.get("model")
+            perm_slug = perm_data.get("permission_type")
+
+            try:
+                role = Role.objects.get(slug=role_slug)
+                model = AppModel.objects.get(slug=model_slug)
+                ptype = PermissionType.objects.get(slug=perm_slug)
+            except Exception as e:
+                errors.append({"input": perm_data, "error": str(e)})
+                continue
+
+            # check exists
+            obj, created_flag = RoleModelPermission.objects.get_or_create(
+                role=role,
+                model=model,
+                permission_type=ptype
+            )
+
+            if created_flag:
+                created.append(RoleModelPermissionSerializer(obj).data)
+            else:
+                skipped.append(RoleModelPermissionSerializer(obj).data)
+
+        return Response({
+            "created": created,
+            "skipped": skipped,
             "errors": errors
         })
 
