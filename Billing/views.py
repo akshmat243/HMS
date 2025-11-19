@@ -53,27 +53,32 @@ class InvoiceViewSet(ProtectedModelViewSet):
         # Content type to EXCLUDE
         exclude_ct = ContentType.objects.get(app_label='inventory', model='purchaseorder')
 
+        if not user.is_staff and not user.is_superuser:
+            qs = Invoice.objects.filter(issued_to=user).exclude(content_type=exclude_ct)
+
+        # USER IS ADMIN  only invoices created for his own hotel/business
+        elif user.is_staff and not user.is_superuser:
+            qs = Invoice.objects.filter(created_by=user).exclude(content_type=exclude_ct)
+
+        # USER IS SUPERUSER all invoices from all admins (except Purchase Order)
+        else:
+            qs = Invoice.objects.exclude(content_type=exclude_ct)
+       
         # TOTAL INVOICES (issued_to user)
-        total_invoices = Invoice.objects.filter(issued_to=user).count()
+        total_invoices = qs.count()
 
         # PENDING
-        pending_invoices = Invoice.objects.filter(
-            issued_to=user,
-            status='unpaid'
-        ).count()
+        pending_invoices = qs.filter(status='unpaid').count()
 
         # OVERDUE
-        overdue_invoices = Invoice.objects.filter(
-            issued_to=user,
+        overdue_invoices = qs.filter(
             status='unpaid',
             due_date__lt=timezone.now().date()
         ).count()
 
         # ⭐ TOTAL REVENUE = sum of paid invoice amounts EXCEPT inventory purchase order invoices
-        total_revenue = Invoice.objects.filter(
+        total_revenue = qs.filter(
             status='paid'
-        ).exclude(
-            content_type=exclude_ct
         ).aggregate(total=Sum('total_amount'))['total'] or 0
 
         return Response({
@@ -132,6 +137,8 @@ class InvoiceViewSet(ProtectedModelViewSet):
 
         wb.save(response)
         return response
+    
+
 
     @action(detail=False, methods=['get'], url_path='recent-invoices')
     def recent_invoices(self, request):
