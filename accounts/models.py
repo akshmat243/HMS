@@ -55,7 +55,7 @@ class User(AbstractBaseUser, PermissionsMixin):
                 count += 1
             self.slug = slug
             
-        self.is_active = self.is_email_verified and self.is_phone_verified
+        # self.is_active = self.is_email_verified and self.is_phone_verified
         super().save(*args, **kwargs)
     
     class Meta:
