@@ -57,6 +57,7 @@ INSTALLED_APPS = [
 
     # social providers
     'allauth.socialaccount.providers.google',
+    'django_filters',
     # 'accounts.apps.AccountsConfig',
     
     'corsheaders',
@@ -77,6 +78,7 @@ INSTALLED_APPS = [
     'staff',
     'inventory',
     'maintenance',
+    'Events',
 ]
 
 MIDDLEWARE = [
