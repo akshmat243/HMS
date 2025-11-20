@@ -4,8 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Sum, Count
 from django.utils import timezone
-from .models import Venue, Event, EventType, Event_Booking as Booking
-from .serializers import VenueSerializer, EventListSerializer, EventDetailSerializer, EventTypeSerializer, EventBookingSerializer as BookingSerializer
+from .models import Venue, Event, EventType #Event_Booking as Booking
+from .serializers import VenueSerializer, EventListSerializer, EventDetailSerializer, EventTypeSerializer #EventBookingSerializer as BookingSerializer
 from MBP.views import ProtectedModelViewSet  # reuse your ProtectedModelViewSet
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -138,17 +138,35 @@ class EventViewSet(ProtectedModelViewSet):
         if not request.user.is_superuser and request.user.is_staff and event.created_by != request.user:
             return Response({"detail": "Not allowed"}, status=status.HTTP_403_FORBIDDEN)
         amount = request.data.get("amount")
-        try:
-            amt = Decimal(str(amount))   # <-- FIX: convert safely to Decimal
-        except:
-            return Response({"detail": "Invalid amount"}, status=status.HTTP_400_BAD_REQUEST)
+        if not amount:
+            return Response({"detail": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        event.deposit_amount = (event.deposit_amount or Decimal("0")) + amt
+        try:
+            amt = Decimal(str(amount))  # safe decimal conversion
+        except:
+            return Response({"detail": "Invalid amount format"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Negative amount check
+        if amt < 0:
+            return Response({"detail": "Deposit amount cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Validate total deposit should not exceed event total_price
+        new_total_deposit = (event.deposit_amount or Decimal("0")) + amt
+
+        if new_total_deposit > event.total_price:
+            return Response(
+                {"detail": f"Deposit cannot exceed total price of {event.total_price}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. Save deposit
+        event.deposit_amount = new_total_deposit
         event.save()
 
         return Response({
             "deposit_amount": str(event.deposit_amount),
-            "payment_percent": event.payment_percent
+            "payment_percent": event.payment_percent,
+            "status": event.status, 
         }, status=status.HTTP_200_OK)
     
 
@@ -180,23 +198,23 @@ class EventViewSet(ProtectedModelViewSet):
 
 
 
-class BookingViewSet(ProtectedModelViewSet):
-    queryset = Booking.objects.select_related("event", "user").all()
-    serializer_class = BookingSerializer
-    model_name = "Booking"
+# class BookingViewSet(ProtectedModelViewSet):
+#     queryset = Booking.objects.select_related("event", "user").all()
+#     serializer_class = BookingSerializer
+#     model_name = "Booking"
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        user = self.request.user
-        if not user.is_authenticated:
-            return qs.none()
-        if user.is_superuser:
-            return qs
-        if user.is_staff:
-            # show bookings for events this admin created
-            return qs.filter(event__created_by=user)
-        # regular users: their own bookings
-        return qs.filter(Q(user=user))
+#     def get_queryset(self):
+#         qs = super().get_queryset()
+#         user = self.request.user
+#         if not user.is_authenticated:
+#             return qs.none()
+#         if user.is_superuser:
+#             return qs
+#         if user.is_staff:
+#             # show bookings for events this admin created
+#             return qs.filter(event__created_by=user)
+#         # regular users: their own bookings
+#         return qs.filter(Q(user=user))
 
 
 class EventTypeViewSet(ProtectedModelViewSet):
