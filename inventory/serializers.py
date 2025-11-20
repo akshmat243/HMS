@@ -95,10 +95,13 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     total_cost = serializers.ReadOnlyField()
     # order = serializers.PrimaryKeyRelatedField(read_only=True)
-    order = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=PurchaseOrder.objects.all()
-    )
+    # order = serializers.SlugRelatedField(
+    #     slug_field='slug',
+    #     queryset=PurchaseOrder.objects.all()
+    # )
+
+    order = serializers.ReadOnlyField(source='order.slug')
+
 
     item = serializers.SlugRelatedField(
         slug_field='slug',
@@ -108,6 +111,7 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseOrderItem
         fields = ['slug', 'order', 'item', 'quantity', 'cost_per_unit', 'total_cost']
+        read_only_fields = ['order', 'slug', 'total_cost']
 
     def validate_quantity(self, value):
         if value <= 0:
@@ -149,11 +153,12 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         # Add items & calculate total
         total_amount = 0
         for item_data in items_data:
-            item_slug = item_data.get('item')
-            try:
-                item_obj = InventoryItem.objects.get(slug=item_slug)
-            except InventoryItem.DoesNotExist:
-                raise serializers.ValidationError({"item": f"Invalid item slug '{item_slug}'"})
+            item_obj = item_data['item']  
+            # item_slug = item_data['item']
+            # try:
+            #     item_obj = InventoryItem.objects.get(slug=item_slug)
+            # except InventoryItem.DoesNotExist:
+            #     raise serializers.ValidationError({"item": f"Invalid item slug '{item_slug}'"})
 
             purchase_item = PurchaseOrderItem.objects.create(
                 order=order,
