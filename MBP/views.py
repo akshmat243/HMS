@@ -18,6 +18,7 @@ import psutil
 from django.utils.timesince import timesince
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from rest_framework import serializers
 
 User = get_user_model()
 
@@ -85,6 +86,108 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
     serializer_class = RoleModelPermissionSerializer
     model_name = 'RoleModelPermission'
     lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Superuser → Full access
+        if user.is_superuser:
+            return super().get_queryset()
+
+        # Hotel admin → Can manage permissions only for roles under his hotel
+        if getattr(user, "role", None) and user.role.name.lower() == "admin":
+            return RoleModelPermission.objects.filter(
+                role__hotel=user.hotel  # <-- Only his hotel roles
+            )
+
+        # Others: No access
+        return RoleModelPermission.objects.none()
+    
+    def create(self, validated_data):
+        user = self.context["request"].user
+
+        if not user.is_superuser:
+            if user.role.name.lower() != "admin":
+                raise serializers.ValidationError("You cannot create roles.")
+            validated_data["hotel"] = user.hotel  # Force hotel admin's hotel
+
+        return super().create(validated_data)
+
+    
+    # @action(detail=False, methods=["post"], url_path="bulk-assign")
+    # def bulk_assign(self, request):
+
+        permissions = request.data.get("permissions", [])
+
+        created = []
+        duplicates = []
+        errors = []
+
+        for perm_data in permissions:
+            # Check if already exists BEFORE serializer validation
+            role = perm_data.get("role")
+            model = perm_data.get("model")
+            permission_type = perm_data.get("permission_type")
+
+            if RoleModelPermission.objects.filter(
+                role__slug=role,
+                model__slug=model,
+                permission_type__slug=permission_type
+            ).exists():
+                duplicates.append(perm_data)
+                continue   # SKIP
+
+            serializer = self.get_serializer(data=perm_data, context={"request": request})
+            if serializer.is_valid():
+                serializer.save()
+                created.append(serializer.data)
+            else:
+                errors.append(serializer.errors)
+
+        return Response({
+            "created": created,
+            "duplicates": duplicates,
+            "errors": errors,
+        })
+
+    @action(detail=False, methods=["post"], url_path="bulk-assign")
+    def bulk_assign(self, request):
+        permissions = request.data.get("permissions", [])
+
+        created = []
+        skipped = []
+        errors = []
+
+        for perm_data in permissions:
+            role_slug = perm_data.get("role")
+            model_slug = perm_data.get("model")
+            perm_slug = perm_data.get("permission_type")
+
+            try:
+                role = Role.objects.get(slug=role_slug)
+                model = AppModel.objects.get(slug=model_slug)
+                ptype = PermissionType.objects.get(slug=perm_slug)
+            except Exception as e:
+                errors.append({"input": perm_data, "error": str(e)})
+                continue
+
+            # check exists
+            obj, created_flag = RoleModelPermission.objects.get_or_create(
+                role=role,
+                model=model,
+                permission_type=ptype
+            )
+
+            if created_flag:
+                created.append(RoleModelPermissionSerializer(obj).data)
+            else:
+                skipped.append(RoleModelPermissionSerializer(obj).data)
+
+        return Response({
+            "created": created,
+            "skipped": skipped,
+            "errors": errors
+        })
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

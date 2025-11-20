@@ -70,21 +70,57 @@ class RoleModelPermissionSerializer(serializers.ModelSerializer):
         model = RoleModelPermission
         fields = [
             'id', 'role', 'model', 'permission_type',
-            'role_name', 'model_name', 'permission_name'
+            'role_name', 'model_name', 'permission_name', 'slug'
         ]
 
     def validate(self, data):
-        role = data.get('role')
-        model = data.get('model')
-        permission = data.get('permission_type')
+        request = self.context["request"]
+        user = request.user
+
+        role = data.get("role")
+        model = data.get("model")
+        permission = data.get("permission_type")
+
+        # Prevent duplicate
         exists = RoleModelPermission.objects.filter(
             role=role, model=model, permission_type=permission
         )
         if self.instance:
             exists = exists.exclude(id=self.instance.id)
+
         if exists.exists():
-            raise serializers.ValidationError("Permission already assigned to this role for this model.")
+            raise serializers.ValidationError("Permission already assigned.")
+
+        # 🛑 HOTEL ADMIN RESTRICTIONS
+        if not user.is_superuser:
+            # Only admin allowed
+            if not hasattr(user, 'role') or user.role.name.lower() != "admin":
+                raise serializers.ValidationError(
+                    "You do not have permission to assign permissions."
+                )
+
+            # Role must belong to same hotel
+            if role.hotel != user.hotel:
+                raise serializers.ValidationError(
+                    "You can assign permissions only to roles inside your hotel."
+                )
+
+            # prevent assigning dangerous permissions
+            if permission.code in ["superuser", "manage_system"]:
+                raise serializers.ValidationError(
+                    "You cannot assign system-level permissions."
+                )
+
+            # prevent modifying models the admin does not own
+            hotel_allowed_models = ["Room", "Booking", "Staff", "RestaurantOrder", "RoomServiceRequest"]
+            if model.name not in hotel_allowed_models:
+                raise serializers.ValidationError(
+                    f"Hotel Admin cannot assign permissions for model: {model.name}"
+                )
+
         return data
+
+    
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

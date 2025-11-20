@@ -2,6 +2,8 @@ import uuid
 from django.db import models
 from django.utils.text import slugify
 from django.db import models, transaction
+from django.db.models import Max
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -213,6 +215,10 @@ class Booking(models.Model):
             self.slug = slugify(self.booking_code)
 
         super().save(*args, **kwargs)
+        if self.status == "checked_out" and self.room:
+            self.room.status = "available"
+            self.room.save()
+
         
         
 class Guest(models.Model):
@@ -267,22 +273,187 @@ class RoomServiceRequest(models.Model):
         ('other', 'Other'),
     ]
 
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('ready', 'Ready for Delivery'),
+        ('delivered', 'Delivered'),
+    ]
+
+    PRIORITY_CHOICES = [
+        ('normal', 'Normal'),
+        ('express', 'Express'),
+    ]
+
+    SERVICE_RATES = {
+        'laundry': 50,      # ₹50 per item
+        'food': 0,          # handled separately
+        'amenities': 0,     # usually free
+        'cleaning': 100,    # fixed
+        'other': 0,
+    }
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    slug = models.SlugField(unique=True, blank=True)  # New slug field
-    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='room_services')
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='room_services')
-    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='service_requests')
+    slug = models.SlugField(unique=True, blank=True)
+    service_code = models.CharField(max_length=30, unique=True, editable=False)
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="room_services")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="room_services")
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="service_requests")
+
     service_type = models.CharField(max_length=50, choices=SERVICE_CHOICES)
-    description = models.TextField(help_text="Details of the request (e.g. 2 towels, 1 sandwich)")
+    description = models.JSONField(default=dict, help_text="e.g. {'items': [{'name': 'Shirt', 'qty': 3}]}")
+
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='normal')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    base_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
     requested_at = models.DateTimeField(auto_now_add=True)
+    pickup_time = models.TimeField(null=True, blank=True)
+    delivery_time = models.TimeField(null=True, blank=True)
     is_resolved = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"{self.service_type.title()} for Room {self.room.room_number}"
+        return f"{self.service_code} - {self.service_type} - Room {self.room.room_number}"
+
+    def calculate_cost(self):
+        rate = self.SERVICE_RATES.get(self.service_type, 0)
+
+        if self.service_type == 'laundry':
+            items = self.description.get('items', [])
+            total_qty = sum(item.get('qty', 1) for item in items)
+            return rate * total_qty
+
+        elif self.service_type == 'cleaning':
+            return rate
+
+        elif self.service_type == 'food':
+            return 0
+
+        else:
+            return rate
 
     def save(self, *args, **kwargs):
+        # ✅ Auto-generate service_code
+        if not self.service_code:
+            year = timezone.now().year
+            hotel_code = slugify(self.room.hotel.name)[:5].upper() if self.room and self.room.hotel else "HOTEL"
+            prefix = f"SRV-{hotel_code}-{year}-"
+            last_code = RoomServiceRequest.objects.filter(service_code__startswith=prefix).aggregate(max_code=Max('service_code'))['max_code']
+
+            if last_code:
+                try:
+                    last_number = int(last_code.split('-')[-1])
+                except (ValueError, IndexError):
+                    last_number = 0
+                next_number = last_number + 1
+            else:
+                next_number = 1
+
+            self.service_code = f"{prefix}{next_number:04d}"
+
+        # ✅ Auto-generate slug
         if not self.slug:
-            room_number = self.room.room_number if self.room else 'room'
-            base = f"{self.service_type}-{room_number}-{uuid.uuid4().hex[:6]}"
-            self.slug = slugify(base)
+            hotel_part = slugify(self.room.hotel.name) if self.room and self.room.hotel else "hotel"
+            base_slug = f"{hotel_part}-{self.service_type}-{self.room.room_number}-{self.service_code}"
+            self.slug = slugify(base_slug)
+
+        # ✅ Auto-calculate costs
+        self.base_cost = self.SERVICE_RATES.get(self.service_type, 0)
+        total = self.calculate_cost()
+        self.total_cost = total
+        self.cost = total
+        is_new = self._state.adding  # Check if this is a new instance
         super().save(*args, **kwargs)
+        
+        # ✅ Auto-create invoice if new and no existing invoice linked
+        from Billing.models import Invoice, InvoiceItem
+        from django.contrib.contenttypes.models import ContentType
+        if is_new:
+            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
+            invoice = Invoice.objects.create(
+                content_type=content_type,
+                object_id=self.id,
+                issued_to=self.user,
+                total_amount=self.total_cost,
+                status='unpaid'
+            )
+
+            InvoiceItem.objects.create(
+                invoice=invoice,
+                description=f"Room Service - {self.service_type.title()} ({self.room.room_number})",
+                quantity=1,
+                unit_price=self.total_cost,
+            )
+        
+        if not self._state.adding:
+
+             # Update linked invoice if exists
+            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
+            invoice = Invoice.objects.filter(content_type=content_type, object_id=self.id).first()
+
+            if invoice:
+                invoice.total_amount = self.total_cost
+                invoice.save(update_fields=["total_amount"])
+
+                invoice.items.all().delete()
+                InvoiceItem.objects.create(
+                    invoice=invoice,
+                    description=f"Updated Room Service - {self.service_type.title()}",
+                    quantity=1,
+                    unit_price=self.total_cost,
+                )
+        is_new = self._state.adding
+
+        # call original save
+        from .models import RoomServiceStage  # avoid circular import
+
+        # If new → create pending stage
+        if is_new:
+            RoomServiceStage.objects.create(
+                service=self,
+                stage='collection'
+            )
+        else:
+            # detect status change
+            old = RoomServiceRequest.objects.filter(pk=self.pk).first()
+            if old and old.status != self.status:
+                stage_map = {
+                    "pending": "collection",
+                    "in_progress": "washing",
+                    "ready": "quality_check",
+                    "delivered": "delivery",
+                }
+                RoomServiceStage.objects.create(
+                    service=self,
+                    stage=stage_map.get(self.status, "collection")
+                )
+
+class RoomServiceStage(models.Model):
+    STAGE_CHOICES = [
+        ("collection", "Collection"),
+        ("sorting", "Sorting"),
+        ("washing", "Washing"),
+        ("drying", "Drying"),
+        ("pressing", "Pressing"),
+        ("quality_check", "Quality Check"),
+        ("delivery", "Delivery"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    service = models.ForeignKey(
+        RoomServiceRequest,
+        on_delete=models.CASCADE,
+        related_name="stages"
+    )
+    stage = models.CharField(max_length=50, choices=STAGE_CHOICES)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timestamp']
+
+    def __str__(self):
+        return f"{self.service.service_code} - {self.stage}"

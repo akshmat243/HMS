@@ -104,3 +104,35 @@ class MetaTag(models.Model):
     def __str__(self):
         return f"Meta: {self.page.title}"
 
+from django.db import models
+from django.utils.text import slugify
+
+class SidebarApp(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    slug = models.SlugField(max_length=60, unique=True, blank=True)
+    label = models.CharField(max_length=100)
+    icon = models.CharField(max_length=100, blank=True)
+    route = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    group = models.CharField(max_length=50, blank=True)
+    # Role-based field: list of allowed role names
+    roles_allowed = models.TextField(
+        blank=True,
+        help_text='Comma separated role names allowed to access this module.'
+    )
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            new_slug = base_slug
+            counter = 1
+            while SidebarApp.objects.filter(slug=new_slug).exclude(id=self.id).exists():
+                new_slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = new_slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.label
+

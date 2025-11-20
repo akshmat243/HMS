@@ -28,3 +28,28 @@ class MetaTagViewSet(ProtectedModelViewSet):
     serializer_class = MetaTagSerializer
     model_name = 'MetaTag'
     lookup_field = 'slug'
+
+from rest_framework import permissions
+from .models import SidebarApp
+from .serializers import SidebarAppSerializer
+
+class SidebarAppViewSet(ProtectedModelViewSet):
+    queryset = SidebarApp.objects.all().order_by('order')
+    serializer_class = SidebarAppSerializer
+    model_name = 'SidebarApp'
+    lookup_field = 'slug'
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        # Superuser sees all active apps
+        if user.is_superuser:
+            return qs
+
+        user_role = getattr(user, 'role', None)
+        if user_role:
+            # Filter apps by roles_allowed containing user's role name (case-insensitive)
+            return qs.filter(roles_allowed__icontains=user_role.name)
+        else:
+            return qs.none()

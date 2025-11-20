@@ -14,6 +14,7 @@ from MBP.views import ProtectedModelViewSet
 from django.core.mail import send_mail
 from django.conf import settings
 import random
+from Hotel.models import Hotel
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -82,6 +83,25 @@ class UserViewSet(ProtectedModelViewSet):
         except Role.DoesNotExist:
             return Response({"error": "Role not found."}, status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=False, methods=['delete'], url_path='delete-my-users')
+    def delete_my_users(self, request):
+        user = request.user
+
+        # SUPERUSER — can delete all normal users
+        if user.is_superuser:
+            deleted, _ = User.objects.exclude(is_superuser=True).delete()
+            return Response({"message": f"Deleted {deleted} users"}, status=200)
+
+        # HOTEL ADMIN — delete users created by him
+        if hasattr(user, 'role') and user.role.name.lower() == "admin":
+            deleted, _ = User.objects.filter(created_by=user).delete()
+            return Response({"message": f"Deleted {deleted} users created by you"}, status=200)
+
+        return Response(
+            {"error": "You do not have permission to delete users."},
+            status=403
+        )
+        
 from django.core.cache import cache
 
 class RegisterView(APIView):
@@ -91,23 +111,6 @@ class RegisterView(APIView):
         serializer = RegisterUserSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
             user = serializer.save()
-
-            # # ✅ Generate OTP for phone
-            # otp = str(random.randint(100000, 999999))
-            
-            # # ✅ Store OTP in cache for 5 min
-            # cache.set(f"otp_{user.phone}", otp, timeout=300)
-            # print(f"DEBUG: OTP for {user.phone} is {otp}")  # Replace with Twilio SMS later
-
-            # ✅ Send email verification
-            verification_link = f"http://127.0.0.1:8000/api/verify-email/{user.slug}/"
-            send_mail(
-                subject="Verify your email",
-                message=f"Hello {user.full_name},\n\nClick here to verify your email: {verification_link}",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
 
             # 🔐 Audit log
             log_audit(
@@ -246,16 +249,30 @@ class LoginView(APIView):
                     "permission": rp.permission_type.code
                 })
 
-        # Step 9: Return response
+        # 🔹 Step 9: Get hotel slug (if applicable)
+        hotel_slug = None
+        if user.is_superuser:
+            # Superuser can manage all hotels
+            hotel_slug = None
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
+            # Hotel admin owns a hotel
+            hotel = Hotel.objects.filter(owner=user).first()
+            if hotel:
+                hotel_slug = hotel.slug
+        elif hasattr(user, "staff_profile") and getattr(user.staff_profile, "hotel", None):
+            # Staff assigned to a hotel
+            hotel_slug = user.staff_profile.hotel.slug
+
+        # 🔹 Step 10: Return complete response
         return Response({
             "refresh": str(refresh),
             "access": str(refresh.access_token),
             "user": {
-                # "id": str(user.id),
                 "email": user.email,
                 "full_name": user.full_name,
                 "role": user.role.name if user.role else None,
                 "permissions": accessible_models,
+                "hotel_slug": hotel_slug,  # ✅ Added
             },
         }, status=status.HTTP_200_OK)
         

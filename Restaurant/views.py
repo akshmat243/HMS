@@ -1,12 +1,14 @@
 from MBP.views import ProtectedModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from datetime import datetime
 from .models import (
     MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
 )
 from .serializers import (
     MenuCategorySerializer, MenuItemSerializer, TableSerializer,
-    RestaurantOrderSerializer, OrderItemSerializer, TableReservationSerializer
+    RestaurantOrderSerializer, OrderItemSerializer, TableReservationSerializer,
+    RestaurantDashboardSerializer
 )
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
 from datetime import date
@@ -80,21 +82,85 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
         if user.is_superuser:
             return RestaurantOrder.objects.all().select_related('hotel', 'table')
 
-        # ✅ Hotel admin: Only own hotel’s data
+        # ✅ Hotel Admin (assigned hotel)
         hotel = getattr(user, 'hotel', None) or getattr(user, 'hotel_profile', None)
         if hotel:
-            # handle both if user.hotel or user.hotel_profile.hotel exists
             hotel_obj = getattr(hotel, 'hotel', hotel)
             return RestaurantOrder.objects.filter(hotel=hotel_obj).select_related('hotel', 'table')
 
-        # ✅ Other users (no hotel assigned): Empty set
+        # ✅ Staff assigned to a hotel
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return RestaurantOrder.objects.filter(hotel=user.staff_profile.hotel).select_related('hotel', 'table')
+
+        # ✅ Others
         return RestaurantOrder.objects.none()
 
     def get_serializer_context(self):
-        """Pass request into serializer for user-hotel linking."""
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+    
+    @action(detail=False, methods=['get'], url_path='today')
+    def today_orders(self, request):
+        today = date.today()
+
+        qs = self.get_queryset().filter(order_time__date=today)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "date": str(today),
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+    
+    @action(detail=False, methods=['get'], url_path='filter-by-date')
+    def filter_by_date(self, request):
+        date_str = request.query_params.get('date')
+
+        if not date_str:
+            return Response({"error": "date parameter is required (YYYY-MM-DD)"}, status=400)
+
+        try:
+            filter_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format"}, status=400)
+
+        qs = self.get_queryset().filter(order_time__date=filter_date)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "date": date_str,
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+
+    @action(detail=False, methods=['get'], url_path='filter-by-month')
+    def filter_by_month(self, request):
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+
+        if not year or not month:
+            return Response({"error": "year and month parameters are required"}, status=400)
+
+        try:
+            year = int(year)
+            month = int(month)
+        except ValueError:
+            return Response({"error": "year and month must be integers"}, status=400)
+
+        qs = self.get_queryset().filter(
+            order_time__year=year,
+            order_time__month=month
+        )
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({
+            "year": year,
+            "month": month,
+            "total_orders": qs.count(),
+            "orders": serializer.data
+        })
+
     
     @action(detail=False, methods=['get'], url_path='summary')
     def order_summary(self, request):
@@ -131,13 +197,28 @@ class OrderItemViewSet(ProtectedModelViewSet):
     lookup_field = 'slug'
 
 class RestaurantDashboardViewSet(ProtectedModelViewSet):
-    """
-    Protected dashboard API for restaurant analytics.
-    Requires authentication + model-based permission.
-    """
-
     model_name = "restaurantdashboard"
-    http_method_names = ['get']  # restrict to GET only since this is an analytics endpoint
+    queryset = None
+    http_method_names = ['get']
+    serializer_class = RestaurantDashboardSerializer
+    
+    def get_queryset(self):
+        """
+        Required ONLY so Swagger stops calling default get_queryset().
+        """
+        if getattr(self, "swagger_fake_view", False):
+            return []  # short-circuit for schema generation
+        
+        # This view has no queryset in real use
+        return Table.objects.none()
+
+    def get_serializer_class(self):
+        """
+        Swagger calls this even though we do not use serializers for response.
+        """
+        if getattr(self, "swagger_fake_view", False):
+            return RestaurantDashboardSerializer
+        return RestaurantDashboardSerializer
 
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
@@ -147,54 +228,58 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
         # Base QuerySets
         tables = Table.objects.all()
         orders = RestaurantOrder.objects.all()
-        payments = Payment.objects.all()
 
-        # 🔹 Role-Based Filtering
+        # ✅ Role-Based Filtering
         if not user.is_superuser:
             if hasattr(user, 'role') and user.role.name.lower() == 'admin':
                 tables = tables.filter(hotel__owner=user)
                 orders = orders.filter(hotel__owner=user)
-                payments = payments.filter(invoice__hotel__owner=user)
+
             elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
                 hotel = user.staff_profile.hotel
                 tables = tables.filter(hotel=hotel)
                 orders = orders.filter(hotel=hotel)
-                payments = payments.filter(invoice__hotel=hotel)
+
             else:
                 return Response(
                     {"error": "You are not associated with any hotel."},
-                    status=status.HTTP_403_FORBIDDEN
+                    status=403
                 )
 
-        # 🔹 Optional Manual Hotel Filter (superuser or admin/staff override)
+        # ✅ Optional Manual Filter
         if hotel_id:
             tables = tables.filter(hotel_id=hotel_id)
             orders = orders.filter(hotel_id=hotel_id)
-            payments = payments.filter(invoice__hotel_id=hotel_id)
 
-        # 1️⃣ Available Tables
+        # ✅ 1. Available Tables
         available_tables = tables.filter(status='available').count()
 
-        # 2️⃣ Active Orders
-        active_orders = orders.filter(status__in=['pending', 'preparing', 'served']).count()
-
-        # 3️⃣ Today's Revenue
+        # ✅ 2. Active Orders
         today = date.today()
-        todays_revenue = payments.filter(payment_date__date=today).aggregate(
-            total=Sum('amount_paid')
-        )['total'] or 0
+        active_orders = orders.filter(
+            order_time__date=today,
+            status__in=['pending', 'preparing', 'served']
+        ).count()
 
-        # 4️⃣ Average Wait Time (in minutes)
+        # ✅ 3. Today's Revenue (from order totals, not payments)
+        todays_revenue = (
+            orders.filter(
+                order_time__date=today,
+                status__in=['served', 'completed'],
+            ).aggregate(total=Sum('grand_total'))['total'] or 0
+        )
+
+        # ✅ 4. Average Wait Time
         avg_wait_minutes = 0
         avg_expr = ExpressionWrapper(
             F('completed_at') - F('order_time'),
             output_field=DurationField()
         )
-
         avg_wait_time = (
-            orders.filter(status='completed', completed_at__isnull=False)
-            .aggregate(avg=Avg(avg_expr))
-            .get('avg')
+            orders.filter(
+                status='completed',
+                completed_at__isnull=False
+            ).aggregate(avg=Avg(avg_expr))['avg']
         )
         if avg_wait_time:
             avg_wait_minutes = round(avg_wait_time.total_seconds() / 60, 2)
@@ -206,6 +291,7 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
             "todays_revenue": float(todays_revenue),
             "avg_wait_time": f"{avg_wait_minutes} min"
         })
+
         
         
 class TableReservationViewSet(ProtectedModelViewSet):
