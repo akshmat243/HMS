@@ -103,29 +103,29 @@ class PurchaseOrderView(ProtectedModelViewSet):
             return qs
         return qs.none()
 
-class PurchaseOrderItemView(ProtectedModelViewSet):
-    queryset = PurchaseOrderItem.objects.all()
-    serializer_class = PurchaseOrderItemSerializer
-    model_name = 'PurchaseOrderItem'
-    lookup_field = 'slug'
+# class PurchaseOrderItemView(ProtectedModelViewSet):
+#     queryset = PurchaseOrderItem.objects.all()
+#     serializer_class = PurchaseOrderItemSerializer
+#     model_name = 'PurchaseOrderItem'
+#     lookup_field = 'slug'
 
-    def perform_create(self, serializer):
-        serializer.save(admin=self.request.user)
+#     def perform_create(self, serializer):
+#         serializer.save(admin=self.request.user)
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset()
+#     def get_queryset(self):
+#         user = self.request.user
+#         qs = super().get_queryset()
 
-    # agar role admin hai, sirf uska hi data dikhao
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
+#     # agar role admin hai, sirf uska hi data dikhao
+#         if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+#             return qs.filter(admin=user)
 
-    # agar superuser hai to sab dikhao
-        if user.is_superuser:
-            return qs
+#     # agar superuser hai to sab dikhao
+#         if user.is_superuser:
+#             return qs
 
-    # kisi aur role ke liye kuch nahi
-        return qs.none()
+#     # kisi aur role ke liye kuch nahi
+#         return qs.none()
     
 
 

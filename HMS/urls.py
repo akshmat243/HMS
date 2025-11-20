@@ -54,6 +54,7 @@ urlpatterns = [
     
     path('', include('inventory.urls')),
     path('', include('maintenance.urls')),
+    path('', include('Events.urls')),
 
     
     

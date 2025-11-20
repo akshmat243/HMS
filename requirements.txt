@@ -22,11 +22,13 @@ django-allauth==65.10.0
 django-ckeditor==6.7.3
 django-cors-headers==4.7.0
 django-environ==0.12.0
+django-filter==25.2
 django-js-asset==3.1.2
 djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.1
 drf-extra-fields==3.7.0
 drf-yasg==1.21.10
+et_xmlfile==2.0.0
 filetype==1.2.0
 google-ai-generativelanguage==0.6.15
 google-api-core==2.25.1
@@ -51,6 +53,7 @@ kombu==5.5.4
 nltk==3.9.1
 oauthlib==3.3.1
 openai==1.109.1
+openpyxl==3.1.5
 packaging==25.0
 pillow==11.3.0
 prompt_toolkit==3.0.52
