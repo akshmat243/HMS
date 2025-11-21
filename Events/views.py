@@ -31,10 +31,12 @@ class VenueViewSet(ProtectedModelViewSet):
             return qs.none()
         if user.is_superuser:
             return qs
-        # staff/admin only see their created venues
-        if user.is_staff:
+        
+        # ADMIN → SEE ONLY THEIR VENUES
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
             return qs.filter(created_by=user)
-        # normal users: maybe only active venues or those created_by them
+
+        # NORMAL USERS → OPTIONAL RULE
         return qs.filter(Q(is_active=True) | Q(created_by=user))
 
 
@@ -60,11 +62,13 @@ class EventViewSet(ProtectedModelViewSet):
             return qs.none()
         if user.is_superuser:
             return qs
-        # staff/admin can only see events they created
-        if user.is_staff:
+        
+        # staff/admin only see their created venues
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
             return qs.filter(created_by=user)
-        # regular users: see events they created or where they are contact (conservative)
-        return qs.filter(Q(created_by=user) | Q(contact_name__icontains=getattr(user, "get_full_name", lambda: "")()))
+        
+        # NORMAL USERS → ONLY EVENTS RELATED TO THEM
+        return qs.filter(created_by=user)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
