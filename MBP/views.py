@@ -189,6 +189,35 @@ class RoleModelPermissionViewSet(ProtectedModelViewSet):
             "errors": errors
         })
 
+from .serializers import RolePermissionAssignSerializer
+class RoleModelPermissionBulkViewSet(ProtectedModelViewSet):
+    serializer_class = RolePermissionAssignSerializer
+    model_name = "RoleModelPermission"
+
+    def get_queryset(self):
+        return RoleModelPermission.objects.all()  # Bulk does not use queryset
+
+    @action(detail=False, methods=['post'], url_path='create')
+    def bulk_create(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.bulk_create(serializer.validated_data)
+        return Response(result)
+
+    @action(detail=False, methods=['put'], url_path='update')
+    def bulk_update(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.bulk_update(serializer.validated_data)
+        return Response(result)
+
+    @action(detail=False, methods=['delete'], url_path='delete')
+    def bulk_delete(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.bulk_delete(serializer.validated_data)
+        return Response(result)
+
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """

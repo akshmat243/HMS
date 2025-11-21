@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.utils.text import slugify
 import uuid
-
+from decimal import Decimal
 
 User = settings.AUTH_USER_MODEL
 
@@ -75,6 +75,7 @@ class Event(models.Model):
     expected_guests = models.PositiveIntegerField(default=0)
     capacity_override = models.PositiveIntegerField(null=True, blank=True)  # optional override for capacity calc
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="events_created")
+
     contact_name = models.CharField(max_length=200, blank=True)
     contact_phone = models.CharField(max_length=50, blank=True)
     tags = models.JSONField(default=list, blank=True)  # e.g. ["Catering", "Audio/Visual"]
@@ -89,6 +90,17 @@ class Event(models.Model):
             while Event.objects.filter(slug=slug_candidate).exists():
                 slug_candidate = uuid.uuid4().hex[:8]
             self.slug = slug_candidate
+
+        if self.deposit_amount is None:
+            self.deposit_amount = Decimal("0")
+
+        if self.total_price and self.total_price > 0:
+            ten_percent = self.total_price * Decimal("0.10")
+
+            if self.deposit_amount == 0:
+                self.status = "pending"
+            elif self.deposit_amount >= ten_percent:
+                self.status = "confirmed"
 
         super().save(*args, **kwargs)
 
@@ -127,15 +139,15 @@ class Event(models.Model):
             return 0
 
 
-class Event_Booking(models.Model):
-    """
-    Represents booking transactions / guest signups (optional).
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="bookings")
-    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
-    guests = models.PositiveIntegerField(default=1)
-    created_at = models.DateTimeField(auto_now_add=True)
+# class Event_Booking(models.Model):
+#     """
+#     Represents booking transactions / guest signups (optional).
+#     """
+#     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+#     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="bookings")
+#     user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+#     guests = models.PositiveIntegerField(default=1)
+#     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"Booking {self.pk} - {self.event.title}"
+#     def __str__(self):
+#         return f"Booking {self.pk} - {self.event.title}"

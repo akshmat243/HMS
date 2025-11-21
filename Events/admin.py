@@ -1,6 +1,6 @@
 # events/admin.py
 from django.contrib import admin
-from .models import Venue, Event, EventType, Event_Booking as Booking
+from .models import Venue, Event, EventType  # Event_Booking as Booking
 
 @admin.register(Venue)
 class VenueAdmin(admin.ModelAdmin):
@@ -15,4 +15,4 @@ class EventAdmin(admin.ModelAdmin):
     search_fields = ("title", "description", "tags")
 
 admin.site.register(EventType)
-admin.site.register(Booking)
+# admin.site.register(Booking)
