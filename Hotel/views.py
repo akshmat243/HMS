@@ -114,13 +114,6 @@ def is_valid_uuid(value):
 
 
 class RoomViewSet(ProtectedModelViewSet):
-    """
-    ViewSet for managing Rooms.
-    Supports:
-    - CRUD operations
-    - Uploading multiple images/videos
-    - Filtering available rooms
-    """
     queryset = Room.objects.all().select_related('hotel', 'room_category').prefetch_related('media')
     serializer_class = RoomSerializer
     model_name = 'Room'
@@ -130,31 +123,68 @@ class RoomViewSet(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
+        # Superuser → sees all rooms
         if user.is_superuser:
             return qs
 
+        # Admin → rooms only from their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
+            return qs.filter(hotel=user.hotel)
 
+        # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
 
         return qs.none()
 
+
     def perform_create(self, serializer):
         user = self.request.user
 
+        # Superuser → choose hotel manually in POST
         if user.is_superuser:
             serializer.save()
             return
 
+        # Admin → forced to their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            hotel = Hotel.objects.filter(owner=user).first()
-            serializer.save(hotel=hotel)
+            serializer.save(hotel=user.hotel)
             return
 
+        # Staff → forced to their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             serializer.save(hotel=user.staff_profile.hotel)
+            return
+
+        raise PermissionDenied("You cannot create rooms.")
+
+
+    def perform_update(self, serializer):
+        user = self.request.user
+
+        instance = self.get_object()
+
+        # Superuser → can update anything
+        if user.is_superuser:
+            serializer.save()
+            return
+
+        # Admin → must belong to same hotel
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            if instance.hotel != user.hotel:
+                raise PermissionDenied("You cannot update rooms for another hotel.")
+            serializer.save(hotel=user.hotel)
+            return
+
+        # Staff
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            if instance.hotel != user.staff_profile.hotel:
+                raise PermissionDenied("You cannot update rooms for another hotel.")
+            serializer.save(hotel=user.staff_profile.hotel)
+            return
+
+        raise PermissionDenied("You cannot update rooms.")
+
 
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
