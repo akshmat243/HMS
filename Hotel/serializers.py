@@ -89,15 +89,19 @@ class RoomSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=RoomCategory.objects.all()
     )
+    max_occupancy = serializers.SerializerMethodField()
 
     class Meta:
         model = Room
         fields = [
             'id', 'hotel_slug', 'room_category', 'room_number', 'room_code', 'slug',
             'floor', 'is_available', 'status', 'price_per_night', 'amenities',
-            'bed_type', 'room_size', 'view', 'description', 'media'
+            'bed_type', 'room_size', 'view', 'description', 'media', 'max_occupancy'
         ]
         read_only_fields = ['slug']
+    
+    def get_max_occupancy(self, obj):
+        return obj.room_category.max_occupancy if obj.room_category else None
 
     def validate(self, data):
         request = self.context.get('request')
@@ -153,7 +157,7 @@ class RoomCreateUpdateSerializer(RoomSerializer):
         user = request.user
 
         # Assign hotel for admin users
-        if hasattr(user, 'role') and user.role == 'admin':
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             validated_data['hotel'] = getattr(user, 'hotel', None)
 
         room = Room.objects.create(**validated_data)
