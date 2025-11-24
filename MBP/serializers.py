@@ -91,7 +91,7 @@ class RoleModelPermissionSerializer(serializers.ModelSerializer):
         if exists.exists():
             raise serializers.ValidationError("Permission already assigned.")
 
-        # 🛑 HOTEL ADMIN RESTRICTIONS
+        # HOTEL ADMIN RESTRICTIONS
         if not user.is_superuser:
             # Only admin allowed
             if not hasattr(user, 'role') or user.role.name.lower() != "admin":
@@ -134,3 +134,157 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'ip_address', 'user_agent', 'timestamp'
         ]
         read_only_fields = fields
+
+from django.utils.text import slugify
+class RolePermissionAssignSerializer(serializers.Serializer):
+    # For CREATE and UPDATE
+    role_name = serializers.CharField(required=False)
+    permissions = serializers.ListField(required=False)
+
+    # For DELETE or updating specific entries
+    slugs = serializers.ListField(required=False)
+
+    def validate(self, data):
+        # Validate role (only required for create/update)
+        if "role_name" in data:
+            role_name = data["role_name"]
+
+            role = Role.objects.filter(name__iexact=role_name).first()
+            if not role:
+                role = Role.objects.create(
+                    name=role_name,
+                    slug=slugify(role_name)
+                )
+            data["role"] = role
+
+        return data
+
+    # ------------------------------------------------------------
+    # BULK CREATE (role_name + model_slug + permission_slugs)
+    # ------------------------------------------------------------
+    def bulk_create(self, validated_data):
+        role = validated_data["role"]
+        blocks = validated_data["permissions"]
+        
+        if not blocks:
+            raise serializers.ValidationError({"permissions": "Permissions list cannot be empty."})
+
+        created_slugs = []
+
+        for block in blocks:
+            model_slug = block["model_slug"]
+            perm_slugs = block["permission_slugs"]
+
+            app_model = AppModel.objects.get(slug=model_slug)
+            
+            if not app_model:
+                raise serializers.ValidationError(
+                    {"model_slug": f"Invalid model slug: {model_slug}. This model does not exist."}
+                )
+
+            for code in perm_slugs:
+                perm = PermissionType.objects.get(code=code)
+                
+                if not perm:
+                    raise serializers.ValidationError(
+                        {"permission_slugs": f"Invalid permission: {code}"}
+                    )
+
+                obj, created = RoleModelPermission.objects.get_or_create(
+                    role=role,
+                    model=app_model,
+                    permission_type=perm
+                )
+                if created:
+                    created_slugs.append(obj.slug)
+
+        return {"created": created_slugs}
+
+    # ------------------------------------------------------------
+    # BULK UPDATE (incremental — add/remove permissions)
+    # ------------------------------------------------------------
+    def bulk_update(self, validated_data):
+        role = validated_data["role"]
+        blocks = validated_data["permissions"]
+
+        updated_slugs = []
+        removed_slugs = []
+        
+        if not blocks:
+            raise serializers.ValidationError({"permissions": "Permissions list cannot be empty."})
+
+        for block in blocks:
+            model_slug = block["model_slug"]
+            new_codes = block["permission_slugs"]
+
+            app_model = AppModel.objects.get(slug=model_slug)
+            if not app_model:
+                raise serializers.ValidationError(
+                    {"model_slug": f"Invalid model slug: {model_slug}. This model does not exist."}
+                )
+
+            # Existing permissions for that role + model
+            existing = RoleModelPermission.objects.filter(role=role, model=app_model)
+            existing_codes = {p.permission_type.code: p for p in existing}
+
+            # Add missing permissions
+            for code in new_codes:
+                if code not in existing_codes:
+                    perm = PermissionType.objects.get(code=code)
+                    
+                    if not perm:
+                        raise serializers.ValidationError(
+                            {"permission_slugs": f"Invalid permission: {code}"}
+                        )
+                        
+                    obj = RoleModelPermission.objects.create(
+                        role=role, model=app_model, permission_type=perm
+                    )
+                    updated_slugs.append(obj.slug)
+
+            # Remove permissions not needed anymore
+            for code, obj in existing_codes.items():
+                if code not in new_codes:
+                    removed_slugs.append(obj.slug)
+                    obj.delete()
+
+        return {"updated": updated_slugs, "removed": removed_slugs}
+
+    # ------------------------------------------------------------
+    # BULK DELETE using slugs
+    # ------------------------------------------------------------
+    def bulk_delete(self, validated_data):
+        slugs = validated_data["slugs"]
+        removed = []
+        
+        if not slugs:
+            raise serializers.ValidationError({"slugs": "List of slugs cannot be empty."})
+
+        for slug in slugs:
+            try:
+                obj = RoleModelPermission.objects.get(slug=slug)
+                obj.delete()
+                removed.append(slug)
+            except RoleModelPermission.DoesNotExist:
+                continue
+
+        return {"deleted": removed}
+    
+
+# {
+#   "role_name": "Admin",
+#   "permissions": [
+#     {
+#       "model_slug": "user",
+#       "permission_slugs": ["c", "r", "u"]
+#     },
+#     {
+#       "model_slug": "hotel",
+#       "permission_slugs": ["r"]
+#     },
+#     {
+#       "model_slug": "booking",
+#       "permission_slugs": ["c", "r"]
+#     }
+#   ]
+# }

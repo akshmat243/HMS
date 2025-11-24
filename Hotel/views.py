@@ -114,13 +114,6 @@ def is_valid_uuid(value):
 
 
 class RoomViewSet(ProtectedModelViewSet):
-    """
-    ViewSet for managing Rooms.
-    Supports:
-    - CRUD operations
-    - Uploading multiple images/videos
-    - Filtering available rooms
-    """
     queryset = Room.objects.all().select_related('hotel', 'room_category').prefetch_related('media')
     serializer_class = RoomSerializer
     model_name = 'Room'
@@ -130,31 +123,68 @@ class RoomViewSet(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
+        # Superuser → sees all rooms
         if user.is_superuser:
             return qs
 
+        # Admin → rooms only from their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
+            return qs.filter(hotel=user.hotel)
 
+        # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
 
         return qs.none()
 
+
     def perform_create(self, serializer):
         user = self.request.user
 
+        # Superuser → choose hotel manually in POST
         if user.is_superuser:
             serializer.save()
             return
 
+        # Admin → forced to their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            hotel = Hotel.objects.filter(owner=user).first()
-            serializer.save(hotel=hotel)
+            serializer.save(hotel=user.hotel)
             return
 
+        # Staff → forced to their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             serializer.save(hotel=user.staff_profile.hotel)
+            return
+
+        raise PermissionDenied("You cannot create rooms.")
+
+
+    def perform_update(self, serializer):
+        user = self.request.user
+
+        instance = self.get_object()
+
+        # Superuser → can update anything
+        if user.is_superuser:
+            serializer.save()
+            return
+
+        # Admin → must belong to same hotel
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            if instance.hotel != user.hotel:
+                raise PermissionDenied("You cannot update rooms for another hotel.")
+            serializer.save(hotel=user.hotel)
+            return
+
+        # Staff
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            if instance.hotel != user.staff_profile.hotel:
+                raise PermissionDenied("You cannot update rooms for another hotel.")
+            serializer.save(hotel=user.staff_profile.hotel)
+            return
+
+        raise PermissionDenied("You cannot update rooms.")
+
 
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -238,38 +268,68 @@ class RoomViewSet(ProtectedModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
         """
-        Returns total count of rooms by status for dashboard cards,
-        but limited to the logged-in admin’s hotel.
-        Superuser can still filter by ?hotel=<hotel_id>.
+        Dashboard summary:
+        - Superuser → can filter by ?hotel=<hotel_slug>
+        - Admin → only their assigned hotel
+        - Staff → only their assigned hotel
         """
 
         user = request.user
 
-        # Superuser can query any hotel via ?hotel=<id>
+        # -----------------------------------
+        # SUPERUSER → filter by hotel slug
+        # -----------------------------------
         if user.is_superuser:
-            hotel_id = request.query_params.get('hotel')
-            if hotel_id:
-                rooms = Room.objects.filter(hotel_id=hotel_id)
+            hotel_slug = request.query_params.get('hotel')  # ⭐ filter by slug
+
+            if hotel_slug:
+                try:
+                    hotel = Hotel.objects.get(slug=hotel_slug)
+                    rooms = Room.objects.filter(hotel=hotel)
+                except Hotel.DoesNotExist:
+                    return Response(
+                        {"error": "Invalid hotel slug."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             else:
                 rooms = Room.objects.all()
-        else:
-            # Normal admin: only their own hotel
-            if hasattr(user, 'hotel'):
-                rooms = Room.objects.filter(hotel=user.hotel)
-            else:
+
+        # -----------------------------------
+        # ADMIN → rooms for their own hotel only
+        # -----------------------------------
+        elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            if not hasattr(user, 'hotel') or user.hotel is None:
                 return Response(
-                    {"error": "No hotel assigned to your account."},
+                    {"error": "Admin does not have a hotel assigned."},
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # Count per status
+            rooms = Room.objects.filter(hotel=user.hotel)
+
+        # -----------------------------------
+        # STAFF → only rooms of their hotel
+        # -----------------------------------
+        elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            rooms = Room.objects.filter(hotel=user.staff_profile.hotel)
+
+        # -----------------------------------
+        # Others → No access
+        # -----------------------------------
+        else:
+            return Response(
+                {"error": "You do not have permission to view room summary."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # -----------------------------------
+        # GROUP BY STATUS
+        # -----------------------------------
         status_counts = rooms.values('status').annotate(total=Count('id'))
+        data = {item['status']: item['total'] for item in status_counts}
 
-        data = {status['status']: status['total'] for status in status_counts}
-
-        # Ensure all statuses are present (even if 0)
-        for key in ['available', 'occupied', 'reserved', 'maintenance']:
-            data.setdefault(key, 0)
+        # Ensure all statuses appear even if zero
+        for status_key in ['available', 'occupied', 'reserved', 'maintenance']:
+            data.setdefault(status_key, 0)
 
         data['total_rooms'] = sum(data.values())
 
