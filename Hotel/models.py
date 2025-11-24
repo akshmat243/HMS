@@ -117,7 +117,7 @@ class Room(models.Model):
 
     def save(self, *args, **kwargs):
         with transaction.atomic():
-            if not self.room_number:
+            if not self.room_number and not self.pk:
                 count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
                 try:
                     floor_number = int(self.floor)
