@@ -126,13 +126,16 @@ class Payment(models.Model):
 
         # ✅ Auto-update invoice status after payment
         total_paid = self.invoice.payments.aggregate(total=models.Sum('amount_paid'))['total'] or 0
+        self.invoice.amount_paid = total_paid
+
         if total_paid >= self.invoice.total_amount:
             self.invoice.status = 'paid'
         elif total_paid > 0:
             self.invoice.status = 'partial'
         else:
             self.invoice.status = 'unpaid'
-        self.invoice.save(update_fields=['status'])
+        
+        self.invoice.save(update_fields=['amount_paid','status'])
 
     def __str__(self):
         return f"Payment {self.slug} ({self.method})"

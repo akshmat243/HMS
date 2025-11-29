@@ -1,7 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from MBP.permissions import HasModelPermission
 from MBP.views import ProtectedModelViewSet
 from .models import *
 from .serializers import *
@@ -11,6 +10,7 @@ from Hotel.models import Room
 from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Count
 from django.utils.dateparse import parse_date
+from django.utils import timezone
 
 
 class MaintenanceCategoryViewSet(ProtectedModelViewSet):
@@ -26,8 +26,34 @@ class MaintenanceCategoryViewSet(ProtectedModelViewSet):
         serializer.save(hotel=self.request.user.hotel)
 
 
+class FacilityViewSet(ProtectedModelViewSet):
+    queryset = Facility.objects.all()
+    serializer_class = FacilitySerializer
+    model_name = "Facility"
+    lookup_field = "slug"
+
+    def get_queryset(self):
+        return self.queryset.filter(hotel=self.request.user.hotel)
+
+    def perform_create(self, serializer):
+        serializer.save(hotel=self.request.user.hotel)
+
+
+class EquipmentViewSet(ProtectedModelViewSet):
+    queryset = Equipment.objects.all()
+    serializer_class = EquipmentSerializer
+    model_name = "Equipment"
+    lookup_field = "slug"
+
+    def get_queryset(self):
+        return self.queryset.filter(hotel=self.request.user.hotel)
+
+    def perform_create(self, serializer):
+        serializer.save(hotel=self.request.user.hotel)
+
+
 class MaintenanceTaskViewSet(ProtectedModelViewSet):
-    queryset = MaintenanceTask.objects.select_related('room', 'guest', 'hotel').all()
+    queryset = MaintenanceTask.objects.select_related('room', 'facility', 'equipment', 'guest', 'hotel').all()
     serializer_class = MaintenanceTaskSerializer
     model_name = "MaintenanceTask"
     lookup_field = "slug"
@@ -42,28 +68,32 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
         # STAFF → show only tasks assigned to HIM
         return MaintenanceTask.objects.filter(assigned_to=user)
 
-
-    # Custom Actions
-
+    # Assign task to staff (accept staff id or slug)
     @action(detail=True, methods=["post"])
     def assign(self, request, slug=None):
         task = self.get_object()
-        staff = request.data.get("assigned_to")
+        staff_slug = request.data.get("assigned_to")
+        if not staff_slug:
+            return Response({"error": "assigned_to required"}, status=400)
 
-        if not staff:
-            return Response({"error": "assigned_to field required"}, status=400)
+        # Accept UUID or slug; try to set assigned_to_id directly
+        try:
+            staff = User.objects.get(slug=staff_slug)
+        except User.DoesNotExist:
+            return Response({"error": "Invalid staff slug"}, status=400)
 
-        task.assigned_to_id = staff
+        task.assigned_to = staff
         task.status = "in_progress"
         task.save()
-        return Response({"message": "Task assigned successfully"})
+
+        return Response({"message": "Task assigned successfully"}, status=200)
 
     @action(detail=True, methods=["post"])
     def complete(self, request, slug=None):
         task = self.get_object()
         task.status = "completed"
         task.save()
-        return Response({"message": "Task marked as completed"})
+        return Response({"message": "Task marked as completed"}, status=200)
 
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):
@@ -77,24 +107,6 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
             "urgent_tasks": qs.filter(priority="high").count(),
         }
         return Response(data, status=200)
-    
-    @action(detail=False, methods=["get"], url_path="dashboard")
-    def dashboard(self, request):
-        hotel = request.user.hotel
-
-        total = MaintenanceTask.objects.filter(hotel=hotel).count()
-        completed = MaintenanceTask.objects.filter(hotel=hotel, status="completed").count()
-        in_progress = MaintenanceTask.objects.filter(hotel=hotel, status="in_progress").count()
-        urgent = MaintenanceTask.objects.filter(hotel=hotel, priority="high").count()
-
-        return Response({
-            "total_tasks": total,
-            "completed_tasks": completed,
-            "in_progress_tasks": in_progress,
-            "urgent_tasks": urgent,
-        })
-
-    
 
 
 class RoomStatusView(APIView):
@@ -108,7 +120,6 @@ class RoomStatusView(APIView):
         data = []
 
         for room in rooms:
-
             # cleaning status
             try:
                 clean = room.cleaning_status
@@ -132,7 +143,7 @@ class RoomStatusView(APIView):
             })
 
         return Response(data, status=200)
-    
+
     @staticmethod
     def post(request):
         room_id = request.data.get("room")
@@ -196,6 +207,8 @@ def maintenance_reports(request):
         "priority",
         "category__name",
         "room__room_number",
+        "facility__name",
+        "equipment__name",
         "created_at",
         "updated_at"
     )
