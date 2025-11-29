@@ -4,6 +4,9 @@ from .views import *
 router = DefaultRouter()
 router.register(r'tasks', MaintenanceTaskViewSet, basename='maintenance-tasks')
 router.register(r'categories', MaintenanceCategoryViewSet, basename='maintenance-categories')
+router.register(r'facilities', FacilityViewSet, basename='maintenance-facilities')
+router.register(r'equipment', EquipmentViewSet, basename='maintenance-equipment')
+
 
 urlpatterns = [
     path('api/maintenance/', include(router.urls)),

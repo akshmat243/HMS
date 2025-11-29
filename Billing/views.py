@@ -111,7 +111,7 @@ class InvoiceViewSet(ProtectedModelViewSet):
         # Header row
         headers = [
             "Invoice No", "Customer Name", "Issued Date",
-            "Due Date", "Total Amount", "Amount Paid", "Status"
+            "Due Date", "Total Amount", "Amount Paid","Balance Due", "Status"
         ]
 
         for col, header in enumerate(headers, 1):
@@ -121,13 +121,16 @@ class InvoiceViewSet(ProtectedModelViewSet):
 
         # Insert invoice data
         for row, invoice in enumerate(invoices, start=2):
+            balance_due = float(invoice.total_amount) - float(invoice.amount_paid)
+
             ws.cell(row=row, column=1, value=invoice.slug)
             ws.cell(row=row, column=2, value=invoice.customer_name)
             ws.cell(row=row, column=3, value=str(invoice.issued_at.date()))
             ws.cell(row=row, column=4, value=str(invoice.due_date))
             ws.cell(row=row, column=5, value=float(invoice.total_amount))
             ws.cell(row=row, column=6, value=float(invoice.amount_paid))
-            ws.cell(row=row, column=7, value=invoice.status)
+            ws.cell(row=row, column=7, value=balance_due)
+            ws.cell(row=row, column=8, value=invoice.status)
 
         # Prepare response
         response = HttpResponse(
