@@ -5,6 +5,7 @@ from django.db import models, transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+# from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
 
@@ -116,6 +117,11 @@ class Room(models.Model):
         return f"{self.room_number} - {self.hotel.name}"
 
     def save(self, *args, **kwargs):
+
+        previous_status = None
+        if self.pk:
+            previous_status = Room.objects.filter(pk=self.pk).first().status
+
         with transaction.atomic():
             if not self.room_number and not self.pk:
                 count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
@@ -152,6 +158,71 @@ class Room(models.Model):
 
             super().save(*args, **kwargs)
 
+        
+         # 1) AVAILABLE → MAINTENANCE (auto-create task)
+        if previous_status != "maintenance" and self.status == "maintenance":
+            self.create_maintenance_task()
+
+        # 2) MAINTENANCE → AVAILABLE (auto-complete tasks)
+        if previous_status == "maintenance" and self.status == "available":
+            self.complete_maintenance_tasks()
+
+         # -----------------------------------------------------
+    # HELPER FUNCTION — CREATE MAINTENANCE TASK
+    # -----------------------------------------------------
+    def create_maintenance_task(self):
+        from maintenance.models import MaintenanceTask, MaintenanceCategory
+        # Prevent duplicate pending/in-progress tasks
+        exists = MaintenanceTask.objects.filter(
+            room=self,
+            status__in=["pending", "in_progress"]
+        ).exists()
+
+        if exists:
+            return  # Skip duplicates
+
+        # Find or create default category
+        category = MaintenanceCategory.objects.filter(hotel=self.hotel).first()
+        if not category:
+            category = MaintenanceCategory.objects.create(
+                hotel=self.hotel,
+                name="General Maintenance"
+            )
+
+        # Find created_by → hotel owner or admin
+        created_by = None
+        if hasattr(self.hotel, "owner") and self.hotel.owner:
+            created_by = self.hotel.owner
+        else:
+            created_by = User.objects.filter(hotel=self.hotel, role__name="Admin").first()
+
+        # Create the maintenance task
+        MaintenanceTask.objects.create(
+            hotel=self.hotel,
+            category=category,
+            location_type="room",
+            room=self,
+            title=f"Room {self.room_number} Under Maintenance",
+            description=f"Auto-created because room {self.room_number} was set to maintenance.",
+            priority="high",
+            status="pending",
+            created_by=created_by
+        )
+    def complete_maintenance_tasks(self):
+        from maintenance.models import MaintenanceTask
+        # Find all active tasks for this room
+        tasks = MaintenanceTask.objects.filter(
+            room=self,
+            status__in=["pending", "in_progress"]
+        )
+
+        if not tasks.exists():
+            return
+
+        # Mark all as completed
+        for task in tasks:
+            task.status = "completed"
+            task.save()   
 
 class RoomMedia(models.Model):
     ROOM_MEDIA_TYPE = [
