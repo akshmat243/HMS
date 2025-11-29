@@ -107,10 +107,11 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=InventoryItem.objects.all()
     )
+    item_name=serializers.CharField(source="item.name",read_only=True)
 
     class Meta:
         model = PurchaseOrderItem
-        fields = ['slug', 'order', 'item', 'quantity', 'cost_per_unit', 'total_cost']
+        fields = ['slug', 'order', 'item', 'item_name','quantity', 'cost_per_unit', 'total_cost']
         read_only_fields = ['order', 'slug', 'total_cost']
 
     def validate_quantity(self, value):
@@ -129,12 +130,14 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=Supplier.objects.all()
     )
+    supplier_name=serializers.CharField(source="supplier.name",read_only=True)
 
     items = PurchaseOrderItemSerializer(many=True, required=False)
+    # item_name=serializers.CharField(source="item.name",read_only=True)
 
     class Meta:
         model = PurchaseOrder
-        fields = ['slug', 'supplier', 'status', 'created_at', 'items']
+        fields = ['slug', 'supplier','supplier_name', 'status', 'created_at', 'items']
         read_only_fields = ['slug', 'created_at']
 
     def create(self, validated_data):

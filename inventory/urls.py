@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import SupplierView, InventoryItemView, InventoryCategoryView, PurchaseOrderView, inventory_dashboard_summary #'''PurchaseOrderItemView,'''
+from .views import * #'''PurchaseOrderItemView,'''
 
 router = DefaultRouter()
 router.register(r'suppliers', SupplierView, basename='inventory-suppliers')
@@ -13,4 +13,6 @@ router.register(r'purchase-orders', PurchaseOrderView, basename='inventory-purch
 urlpatterns = [
     path('api/', include(router.urls)),
     path('api/dashboard-summary/', inventory_dashboard_summary, name='inventory-dashboard-summary'),
+    path('api/reports/overview/', inventory_reports_overview, name='inventory-reports-overview'),
+    path('api/reports/low-items/', low_items_list, name='inventory-low-items'),
 ]
