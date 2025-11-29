@@ -143,8 +143,8 @@ class RoomViewSet(ProtectedModelViewSet):
 
         # Superuser → choose hotel manually in POST
         if user.is_superuser:
-            serializer.save()
-            return
+            return serializer.save()
+            
 
         # Admin → forced to their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':

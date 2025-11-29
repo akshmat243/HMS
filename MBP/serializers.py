@@ -91,7 +91,7 @@ class RoleModelPermissionSerializer(serializers.ModelSerializer):
         if exists.exists():
             raise serializers.ValidationError("Permission already assigned.")
 
-        # 🛑 HOTEL ADMIN RESTRICTIONS
+        # HOTEL ADMIN RESTRICTIONS
         if not user.is_superuser:
             # Only admin allowed
             if not hasattr(user, 'role') or user.role.name.lower() != "admin":
@@ -148,10 +148,13 @@ class RolePermissionAssignSerializer(serializers.Serializer):
         # Validate role (only required for create/update)
         if "role_name" in data:
             role_name = data["role_name"]
-            role, _ = Role.objects.get_or_create(
-                name=role_name,
-                defaults={"slug": slugify(role_name)}
-            )
+
+            role = Role.objects.filter(name__iexact=role_name).first()
+            if not role:
+                role = Role.objects.create(
+                    name=role_name,
+                    slug=slugify(role_name)
+                )
             data["role"] = role
 
         return data
@@ -162,6 +165,9 @@ class RolePermissionAssignSerializer(serializers.Serializer):
     def bulk_create(self, validated_data):
         role = validated_data["role"]
         blocks = validated_data["permissions"]
+        
+        if not blocks:
+            raise serializers.ValidationError({"permissions": "Permissions list cannot be empty."})
 
         created_slugs = []
 
@@ -170,9 +176,19 @@ class RolePermissionAssignSerializer(serializers.Serializer):
             perm_slugs = block["permission_slugs"]
 
             app_model = AppModel.objects.get(slug=model_slug)
+            
+            if not app_model:
+                raise serializers.ValidationError(
+                    {"model_slug": f"Invalid model slug: {model_slug}. This model does not exist."}
+                )
 
             for code in perm_slugs:
                 perm = PermissionType.objects.get(code=code)
+                
+                if not perm:
+                    raise serializers.ValidationError(
+                        {"permission_slugs": f"Invalid permission: {code}"}
+                    )
 
                 obj, created = RoleModelPermission.objects.get_or_create(
                     role=role,
@@ -193,12 +209,19 @@ class RolePermissionAssignSerializer(serializers.Serializer):
 
         updated_slugs = []
         removed_slugs = []
+        
+        if not blocks:
+            raise serializers.ValidationError({"permissions": "Permissions list cannot be empty."})
 
         for block in blocks:
             model_slug = block["model_slug"]
             new_codes = block["permission_slugs"]
 
             app_model = AppModel.objects.get(slug=model_slug)
+            if not app_model:
+                raise serializers.ValidationError(
+                    {"model_slug": f"Invalid model slug: {model_slug}. This model does not exist."}
+                )
 
             # Existing permissions for that role + model
             existing = RoleModelPermission.objects.filter(role=role, model=app_model)
@@ -208,6 +231,12 @@ class RolePermissionAssignSerializer(serializers.Serializer):
             for code in new_codes:
                 if code not in existing_codes:
                     perm = PermissionType.objects.get(code=code)
+                    
+                    if not perm:
+                        raise serializers.ValidationError(
+                            {"permission_slugs": f"Invalid permission: {code}"}
+                        )
+                        
                     obj = RoleModelPermission.objects.create(
                         role=role, model=app_model, permission_type=perm
                     )
@@ -227,6 +256,9 @@ class RolePermissionAssignSerializer(serializers.Serializer):
     def bulk_delete(self, validated_data):
         slugs = validated_data["slugs"]
         removed = []
+        
+        if not slugs:
+            raise serializers.ValidationError({"slugs": "List of slugs cannot be empty."})
 
         for slug in slugs:
             try:
