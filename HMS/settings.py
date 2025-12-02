@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     'inventory',
     'maintenance',
     'Events',
+    'Guest_Services',
 ]
 
 MIDDLEWARE = [
