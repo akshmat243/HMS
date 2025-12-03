@@ -93,7 +93,9 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
         task = self.get_object()
         task.status = "completed"
         task.save()
-        return Response({"message": "Task marked as completed"}, status=200)
+
+        return Response({"message":"Task Mark as Completed"}, status=200)
+
 
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):
@@ -107,6 +109,33 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
             "urgent_tasks": qs.filter(priority="high").count(),
         }
         return Response(data, status=200)
+    
+
+    #  CHANGE : API Room ko Available karne ke liye
+class MarkRoomAvailableView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Frontend se room_id ya room_slug bhejna hoga
+        room_slug = request.data.get('room_slug')
+        
+        if not room_slug:
+            return Response({"error": "Room slug is required"}, status=400)
+
+        try:
+            # Sirf user ke hotel ka room hona chahiye
+            room = Room.objects.get(slug=room_slug, hotel=request.user.hotel)
+        except Room.DoesNotExist:
+            return Response({"error": "Room not found or access denied"}, status=404)
+
+        # Room status update
+        room.status = 'available'
+        room.save()
+
+        return Response({
+            "message": f"Room {room.room_number} is now marked as Available.",
+            "status": "clean"
+        }, status=200)
 
 
 class RoomStatusView(APIView):
@@ -131,6 +160,22 @@ class RoomStatusView(APIView):
                 room=room,
                 status__in=["pending", "in_progress"]
             ).values_list("title", flat=True)
+
+
+            final_status = "Clean" # Default fallback
+            
+            if room.status == 'maintenance':
+                final_status = "maintenance"
+            elif room.status == 'reserved':
+                final_status = "reserved" # Frontend pe isse filter out kar lena ya alag color dena
+            elif room.status == 'occupied':
+                final_status = "occupied"
+            elif issues:
+                # Agar room available hai par chhota mota issue hai (like bulb change)
+                final_status = "maintenance"
+            else:
+                final_status = "clean" # Matlab available and clean
+
 
             data.append({
                 "room_number": room.room_number,
@@ -158,6 +203,13 @@ class RoomStatusView(APIView):
         schedule.last_cleaned = last_cleaned
         schedule.next_cleaning = next_cleaning
         schedule.save()
+
+        # Agar Cleaning schedule update kiya hai to room available kar do
+        # (Agar tumhara cleaning workflow 'Maintenance' status use karta hai)
+        room = Room.objects.get(id=room_id)
+        if room.status == 'maintenance':
+            room.status = 'available'
+            room.save()
 
         return Response({"message": "Cleaning schedule updated"}, status=200)
 

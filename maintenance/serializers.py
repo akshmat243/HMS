@@ -50,6 +50,7 @@ class MaintenanceTaskSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     hotel_name = serializers.CharField(source='hotel.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    icon_name = serializers.CharField(source='category.name', read_only=True)
 
     class Meta:
         model = MaintenanceTask
@@ -57,6 +58,7 @@ class MaintenanceTaskSerializer(serializers.ModelSerializer):
             'id', 'slug',
             'hotel', 'hotel_name',
             'category', 'category_name',
+            'icon_name',
 
             'location_type', 'room', 'room_number',
             'facility', 'facility_name', 'equipment', 'equipment_name',
