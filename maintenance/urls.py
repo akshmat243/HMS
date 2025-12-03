@@ -12,4 +12,5 @@ urlpatterns = [
     path('api/maintenance/', include(router.urls)),
     path("api/maintenance/room-status/", RoomStatusView.as_view(), name="room-status"),
     path("api/maintenance/reports/", maintenance_reports, name="maintenance-reports"),
+    path('api/maintenance/schedule-available/', MarkRoomAvailableView.as_view(), name='schedule-available'),
 ]
