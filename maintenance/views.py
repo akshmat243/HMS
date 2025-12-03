@@ -116,7 +116,7 @@ class MarkRoomAvailableView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Frontend se room_id ya room_slug bhejna hoga
+        # Frontend se room_slug bhejna hoga
         room_slug = request.data.get('room_slug')
         
         if not room_slug:
@@ -143,40 +143,44 @@ class RoomStatusView(APIView):
 
     def get(self, request):
         hotel = request.user.hotel
-
         rooms = Room.objects.filter(hotel=hotel)
-
         data = []
 
         for room in rooms:
-            # cleaning status
             try:
                 clean = room.cleaning_status
             except RoomCleaningSchedule.DoesNotExist:
                 clean = None
 
-            # active issues
-            issues = MaintenanceTask.objects.filter(
+            # Check Active Tasks (Pending or In Progress)
+            active_issues_qs = MaintenanceTask.objects.filter(
                 room=room,
                 status__in=["pending", "in_progress"]
-            ).values_list("title", flat=True)
+            )
+            issues = active_issues_qs.values_list("title", flat=True)
+            has_pending_tasks = active_issues_qs.exists()
 
-
-            final_status = "Clean" # Default fallback
+            # --- STATUS DISPLAY LOGIC ---
             
-            if room.status == 'maintenance':
-                final_status = "maintenance"
+            # Agar Room Available (Cleaned & Approved) hai, to list se hata do
+            if room.status == 'available':
+                continue 
+
+            # Baaki status calculate karo
+            status_display = "clean" # Default
+
+            if room.status == 'occupied':
+                status_display = "occupied"
             elif room.status == 'reserved':
-                final_status = "reserved" # Frontend pe isse filter out kar lena ya alag color dena
-            elif room.status == 'occupied':
-                final_status = "occupied"
-            elif issues:
-                # Agar room available hai par chhota mota issue hai (like bulb change)
-                final_status = "maintenance"
-            else:
-                final_status = "clean" # Matlab available and clean
-
-
+                status_display = "reserved"
+            elif room.status == 'maintenance':
+                if has_pending_tasks:
+                    # Agar maintenance mode mein hai aur kaam bacha hai
+                    status_display = "maintenance"
+                else:
+                    status_display = "clean"
+            
+            # Data Prepare
             data.append({
                 "room_number": room.room_number,
                 "floor": room.floor,
@@ -184,7 +188,8 @@ class RoomStatusView(APIView):
                 "last_cleaned": clean.last_cleaned if clean else None,
                 "next_cleaning": clean.next_cleaning if clean else None,
                 "active_issues": list(issues),
-                "status": "maintenance" if issues else "clean"
+                "status": status_display, # Frontend pe ye 'maintenance' ya 'clean' dikhayega
+                "room_slug": room.slug
             })
 
         return Response(data, status=200)

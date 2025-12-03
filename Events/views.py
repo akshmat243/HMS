@@ -38,6 +38,38 @@ class VenueViewSet(ProtectedModelViewSet):
 
         # NORMAL USERS → OPTIONAL RULE
         return qs.filter(Q(is_active=True) | Q(created_by=user))
+    
+
+    @action(detail=True, methods=["get"], url_path="schedule")
+    def schedule(self, request, slug=None):
+        """
+        Sirf UPCOMING (future) events dikhane ke liye.
+        URL: /api/venues/<slug>/schedule/
+        """
+        venue = self.get_object()
+        
+        #current time
+        now = timezone.now()
+
+        # Filter:
+        # 1. Venue wahi hona chahiye
+        # 2. Start time 'ab' se bada ya barabar hona chahiye (__gte = Greater Than or Equal)
+        events = Event.objects.filter(
+            venue=venue, 
+            start_datetime__gte=now
+        ).order_by('start_datetime') # Jo event pehle aayega wo pehle dikhega
+
+        data = [
+            {
+                "id": e.id,
+                "title": e.title,
+                "start": e.start_datetime,
+                "end": e.end_datetime,
+                "status": e.status,
+                "customer": e.contact_name,
+            } for e in events
+        ]
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class EventViewSet(ProtectedModelViewSet):
@@ -98,7 +130,7 @@ class EventViewSet(ProtectedModelViewSet):
         ]
         return Response(data, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=["get"], url_path="analytics")
+    @action(detail=False, methods=["get"], url_path="analytical_data")
     def analytics(self, request):
         """
         Return aggregated data for Reports page:
