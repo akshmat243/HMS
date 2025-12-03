@@ -143,7 +143,11 @@ class RoomStatusView(APIView):
 
     def get(self, request):
         hotel = request.user.hotel
-        rooms = Room.objects.filter(hotel=hotel)
+        
+        # ✅ STEP 1: Database se sirf wahi rooms lao jo abhi 'Maintenance' mode mein hain.
+        # Isse Reserved, Occupied aur Available apne aap filter out ho jayenge.
+        rooms = Room.objects.filter(hotel=hotel, status='maintenance')
+
         data = []
 
         for room in rooms:
@@ -152,35 +156,23 @@ class RoomStatusView(APIView):
             except RoomCleaningSchedule.DoesNotExist:
                 clean = None
 
-            # Check Active Tasks (Pending or In Progress)
-            active_issues_qs = MaintenanceTask.objects.filter(
+            # Check karo koi task pending/in-progress hai kya?
+            issues = MaintenanceTask.objects.filter(
                 room=room,
                 status__in=["pending", "in_progress"]
-            )
-            issues = active_issues_qs.values_list("title", flat=True)
-            has_pending_tasks = active_issues_qs.exists()
+            ).values_list("title", flat=True)
 
-            # --- STATUS DISPLAY LOGIC ---
+            # ✅ STEP 2: Status Display Logic
+            # Room DB mein 'maintenance' hi hai, par hum frontend ko alag status bhejenge
             
-            # Agar Room Available (Cleaned & Approved) hai, to list se hata do
-            if room.status == 'available':
-                continue 
+            if issues:
+                # Agar Tasks bache hain -> "Maintenance" (Red/Orange)
+                final_status = "maintenance"
+            else:
+                # Agar Tasks complete ho gaye hain (list empty) -> "Clean" (Green Tick)
+                # Ye tab tak dikhega jab tak tum 'Mark Available' API hit nahi karte
+                final_status = "clean"
 
-            # Baaki status calculate karo
-            status_display = "clean" # Default
-
-            if room.status == 'occupied':
-                status_display = "occupied"
-            elif room.status == 'reserved':
-                status_display = "reserved"
-            elif room.status == 'maintenance':
-                if has_pending_tasks:
-                    # Agar maintenance mode mein hai aur kaam bacha hai
-                    status_display = "maintenance"
-                else:
-                    status_display = "clean"
-            
-            # Data Prepare
             data.append({
                 "room_number": room.room_number,
                 "floor": room.floor,
@@ -188,7 +180,7 @@ class RoomStatusView(APIView):
                 "last_cleaned": clean.last_cleaned if clean else None,
                 "next_cleaning": clean.next_cleaning if clean else None,
                 "active_issues": list(issues),
-                "status": status_display, # Frontend pe ye 'maintenance' ya 'clean' dikhayega
+                "status": final_status,  # <--- Ye frontend pe color decide karega
                 "room_slug": room.slug
             })
 
