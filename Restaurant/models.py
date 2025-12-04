@@ -96,6 +96,25 @@ class Table(models.Model):
             self.slug = new_slug
 
         super().save(*args, **kwargs)
+    
+    def get_last_status_time(self):
+        from Restaurant.models import RestaurantOrder  # avoid circular import
+
+        active_status = ['pending', 'preparing', 'served']
+
+        # last active order of this table
+        order = RestaurantOrder.objects.filter(
+            table=self,
+            status__in=active_status
+        ).order_by('-status_updated_at').first()
+
+        if not order or not order.status_updated_at:
+            return None
+
+        diff = timezone.now() - order.status_updated_at
+        minutes = int(diff.total_seconds() / 60)
+
+        return minutes
 
 class RestaurantOrder(models.Model):
     STATUS_CHOICES = [
