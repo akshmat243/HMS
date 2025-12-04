@@ -61,7 +61,7 @@ class TableSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=Hotel.objects.all()
     )
-    active_order_time = serializers.SerializerMethodField()
+    
     last_status_time = serializers.SerializerMethodField()
     
     class Meta:
@@ -70,24 +70,10 @@ class TableSerializer(serializers.ModelSerializer):
         read_only_fields = ['slug']
     
     def get_last_status_time(self, obj):
-        if not obj.status_updated_at:
+        minutes = obj.get_last_status_time()
+        if minutes is None:
             return None
-        diff = timezone.now() - obj.status_updated_at
-        minutes = int(diff.total_seconds() // 60)
-        return f"{minutes} minutes ago"    
-
-    def get_active_order_time(self, obj):
-        order = RestaurantOrder.objects.filter(
-            table=obj,
-            status__in=["pending", "preparing", "served"]
-        ).order_by('-order_time').first()
-
-        if not order:
-            return None
-
-        diff = timezone.now() - order.order_time
-        minutes = int(diff.total_seconds() // 60)
-        return f"{minutes} minutes since order started"
+        return f"{minutes} min"   
 
 
     def validate_number(self, value):
