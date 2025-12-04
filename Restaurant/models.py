@@ -70,6 +70,8 @@ class Table(models.Model):
     table_code = models.CharField(max_length=10, unique=True, blank=True)
     capacity = models.PositiveIntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
+    
+    status_updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Table {self.number} - {self.hotel.name}"
