@@ -94,27 +94,44 @@ class Table(models.Model):
                 counter += 1
                 new_slug = f"{base_slug}-{counter}"
             self.slug = new_slug
+        if self.pk:
+            old = Table.objects.filter(pk=self.pk).first()
+            if old and old.status != self.status:
+                self.status_updated_at = timezone.now()
 
         super().save(*args, **kwargs)
     
     def get_last_status_time(self):
-        from Restaurant.models import RestaurantOrder  # avoid circular import
+        from Restaurant.models import RestaurantOrder
 
+        now = timezone.now()
+
+        # If table is available → use table.status_updated_at
+        if self.status == "available":
+            if self.status_updated_at:
+                diff = now - self.status_updated_at
+                return int(diff.total_seconds() / 60)
+            return None
+
+        # If table is not available → fetch last active order
         active_status = ['pending', 'preparing', 'served']
 
-        # last active order of this table
         order = RestaurantOrder.objects.filter(
             table=self,
             status__in=active_status
         ).order_by('-status_updated_at').first()
 
-        if not order or not order.status_updated_at:
-            return None
+        if order and order.status_updated_at:
+            diff = now - order.status_updated_at
+            return int(diff.total_seconds() / 60)
 
-        diff = timezone.now() - order.status_updated_at
-        minutes = int(diff.total_seconds() / 60)
+        # If table has no active order, fall back to table timestamp
+        if self.status_updated_at:
+            diff = now - self.status_updated_at
+            return int(diff.total_seconds() / 60)
 
-        return minutes
+        return None
+
 
 class RestaurantOrder(models.Model):
     STATUS_CHOICES = [
