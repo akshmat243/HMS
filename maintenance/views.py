@@ -116,7 +116,7 @@ class MarkRoomAvailableView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Frontend se room_id ya room_slug bhejna hoga
+        # Frontend se room_slug bhejna hoga
         room_slug = request.data.get('room_slug')
         
         if not room_slug:
@@ -143,39 +143,35 @@ class RoomStatusView(APIView):
 
     def get(self, request):
         hotel = request.user.hotel
-
-        rooms = Room.objects.filter(hotel=hotel)
+        
+        # ✅ STEP 1: Database se sirf wahi rooms lao jo abhi 'Maintenance' mode mein hain.
+        # Isse Reserved, Occupied aur Available apne aap filter out ho jayenge.
+        rooms = Room.objects.filter(hotel=hotel, status='maintenance')
 
         data = []
 
         for room in rooms:
-            # cleaning status
             try:
                 clean = room.cleaning_status
             except RoomCleaningSchedule.DoesNotExist:
                 clean = None
 
-            # active issues
+            # Check karo koi task pending/in-progress hai kya?
             issues = MaintenanceTask.objects.filter(
                 room=room,
                 status__in=["pending", "in_progress"]
             ).values_list("title", flat=True)
 
-
-            final_status = "Clean" # Default fallback
+            # ✅ STEP 2: Status Display Logic
+            # Room DB mein 'maintenance' hi hai, par hum frontend ko alag status bhejenge
             
-            if room.status == 'maintenance':
-                final_status = "maintenance"
-            elif room.status == 'reserved':
-                final_status = "reserved" # Frontend pe isse filter out kar lena ya alag color dena
-            elif room.status == 'occupied':
-                final_status = "occupied"
-            elif issues:
-                # Agar room available hai par chhota mota issue hai (like bulb change)
+            if issues:
+                # Agar Tasks bache hain -> "Maintenance" (Red/Orange)
                 final_status = "maintenance"
             else:
-                final_status = "clean" # Matlab available and clean
-
+                # Agar Tasks complete ho gaye hain (list empty) -> "Clean" (Green Tick)
+                # Ye tab tak dikhega jab tak tum 'Mark Available' API hit nahi karte
+                final_status = "clean"
 
             data.append({
                 "room_number": room.room_number,
@@ -184,7 +180,8 @@ class RoomStatusView(APIView):
                 "last_cleaned": clean.last_cleaned if clean else None,
                 "next_cleaning": clean.next_cleaning if clean else None,
                 "active_issues": list(issues),
-                "status": "maintenance" if issues else "clean"
+                "status": final_status,  # <--- Ye frontend pe color decide karega
+                "room_slug": room.slug
             })
 
         return Response(data, status=200)
