@@ -3,11 +3,53 @@ from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from Billing.models import Invoice, InvoiceItem
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant
 )
 from Hotel.models import Hotel
 from django.core.validators import RegexValidator
 
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
+class RestaurantSerializer(serializers.ModelSerializer):
+    owner_slug = serializers.SlugField(write_only=True, required=True)
+    owner_name = serializers.CharField(source='owner.full_name', read_only=True)
+
+    class Meta:
+        model = Restaurant
+        fields = [
+            'id', 'slug', 'name', 'description', 'address', 'city', 'state', 'country',
+            'pincode', 'contact_number', 'email', 'logo', 'cover_image', 'status',
+            'owner_slug', 'owner_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['slug', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        owner_slug = validated_data.pop('owner_slug')
+        try:
+            owner = User.objects.get(slug=owner_slug)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({'owner_slug': 'Invalid admin user slug'})
+
+        if str(owner.role).lower() != 'admin':
+            raise serializers.ValidationError({'owner_slug': 'User must have Admin role'})
+
+        if Restaurant.objects.filter(owner=owner).exists():
+            raise serializers.ValidationError({'owner_slug': 'This admin already owns a Restaurant'})
+
+        restaurant = Restaurant.objects.create(owner=owner, **validated_data)
+        return restaurant
+
+    def update(self, instance, validated_data):
+        # Prevent changing owner except by superuser
+        if 'owner_slug' in validated_data:
+            request = self.context['request']
+            if not request.user.is_superuser:
+                raise serializers.ValidationError({'owner_slug': 'You cannot change restaurant admin.'})
+            owner_slug = validated_data.pop('owner_slug')
+            instance.owner = User.objects.get(slug=owner_slug)
+
+        return super().update(instance, validated_data)
 
 
 class MenuCategorySerializer(serializers.ModelSerializer):
@@ -317,3 +359,36 @@ class RestaurantDashboardSerializer(serializers.Serializer):
     active_orders = serializers.IntegerField()
     todays_revenue = serializers.FloatField()
     avg_wait_time = serializers.CharField()
+
+
+from .models import BookingCallback
+class BookingCallbackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingCallback
+        fields = '__all__'
+
+    def validate_restaurant_name(self, value):
+        """
+        Check if the restaurant name exists in our Restaurant model.
+        """
+        # 1. Extra spaces hata dete hain (strip)
+        restaurant_name = value.strip()
+
+        # 2. Check karte hain database me
+        # __iexact ka matlab hai case-insensitive (User 'Taj' likhe ya 'taj', dono chalega)
+        if not Restaurant.objects.filter(name__iexact=restaurant_name).exists():
+            raise serializers.ValidationError("Restaurant does not exist.")
+        
+        return restaurant_name
+
+
+class TableSearchSerializer(serializers.ModelSerializer):
+    # Hotel ki details fetch karne ke liye
+    hotel_name = serializers.CharField(source='hotel.name', read_only=True)
+    hotel_city = serializers.CharField(source='hotel.city', read_only=True)
+    hotel_address = serializers.CharField(source='hotel.address', read_only=True)
+    hotel_image = serializers.ImageField(source='hotel.cover_image', read_only=True) # Agar Hotel model me image h to
+
+    class Meta:
+        model = Table
+        fields = ['id', 'number', 'capacity', 'status', 'hotel_name', 'hotel_city', 'hotel_address', 'hotel_image']

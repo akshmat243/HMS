@@ -1,6 +1,5 @@
 from django.contrib import admin
-from .models import Notification, Message, Feedback
-
+from .models import Notification, Message, Feedback, Subscriber
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ('title', 'sent_to', 'is_read', 'created_at')
@@ -20,3 +19,10 @@ class FeedbackAdmin(admin.ModelAdmin):
     list_display = ('user', 'rating', 'submitted_at')
     search_fields = ('user__full_name',)
     list_filter = ('rating',)
+
+@admin.register(Subscriber)
+class SubscribeAdmin(admin.ModelAdmin):
+    list_display = ('email', 'subscribed_at')
+    # search_fields = ('email')
+    # ordering = ('updated_at')
+

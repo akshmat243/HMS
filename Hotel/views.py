@@ -2,21 +2,21 @@ from MBP.views import ProtectedModelViewSet
 from datetime import date, datetime
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Count, Q, F, Avg, Sum
+from django.db.models import Count, Q, F, Avg, Sum, Count, Min, Prefetch, Max
 from django.utils import timezone
 from rest_framework import status
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia, Destination, MobileAppConfig, Package
 from django.core.exceptions import PermissionDenied
 from django.utils.text import slugify
-from .serializers import (
-    HotelSerializer,
-    RoomCategorySerializer,
-    RoomSerializer,
-    BookingSerializer,
-    RoomServiceRequestSerializer,
-    RoomCreateUpdateSerializer,
-    RoomMediaSerializer
-)
+from .serializers import *
+from rest_framework.permissions import AllowAny
+from django.db.models.functions import Trim, Lower
+from Restaurant.models import Restaurant
+import random
+from rest_framework.views import APIView
+import os
+from django.http import FileResponse, Http404
+
 
 
 class HotelViewSet(ProtectedModelViewSet):
@@ -80,6 +80,210 @@ class HotelViewSet(ProtectedModelViewSet):
             )
 
         serializer.save(slug=slug)
+
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='search')
+    def search(self, request):
+        """
+        Public API to search hotels without login.
+        Query Params:
+        - location (string): City, State, or Hotel Name
+        - check_in (YYYY-MM-DD)
+        - check_out (YYYY-MM-DD)
+        - guests (int): Total number of guests
+        - rooms (int): Number of rooms required
+        """
+        location = request.query_params.get('location', '').strip()
+        check_in = request.query_params.get('check_in')
+        check_out = request.query_params.get('check_out')
+        guests = int(request.query_params.get('guests', 1))
+        rooms_required = int(request.query_params.get('rooms', 1))
+
+        # 1. Start with all hotels (or active ones)
+        queryset = Hotel.objects.filter(status='available')
+
+        # 2. Filter by Location (City, State, or Name)
+        if location:
+            queryset = queryset.filter(
+                Q(city__icontains=location) | 
+                Q(state__icontains=location) | 
+                Q(name__icontains=location) |
+                Q(address__icontains=location)
+            )
+
+        # 3. Filter by Date Availability (The logic part)
+        if check_in and check_out:
+            try:
+                check_in_date = datetime.strptime(check_in, "%Y-%m-%d").date()
+                check_out_date = datetime.strptime(check_out, "%Y-%m-%d").date()
+            except ValueError:
+                return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+            # Find rooms that are booked during these dates
+            booked_rooms_ids = Booking.objects.filter(
+                status__in=['confirmed', 'checked_in', 'pending'], # Exclude cancelled/checked_out
+                room__isnull=False
+            ).filter(
+                # Check for date overlap
+                Q(check_in__lt=check_out_date) & Q(check_out__gt=check_in_date)
+            ).values_list('room_id', flat=True)
+
+            # Find Available Rooms that match Guest Capacity
+            # We assume guests are distributed evenly, e.g., 4 guests in 2 rooms = 2 per room.
+            guests_per_room = guests / rooms_required 
+
+            available_rooms = Room.objects.filter(
+                status='available',
+                is_available=True
+            ).exclude(
+                id__in=booked_rooms_ids
+            ).filter(
+                # Ensure room category can hold the guests
+                room_category__max_occupancy__gte=guests_per_room
+            )
+
+            # 4. Filter Hotels that have enough available rooms
+            # We annotate the hotel queryset with the count of valid available rooms
+            queryset = queryset.prefetch_related(
+                Prefetch('rooms', queryset=available_rooms, to_attr='available_room_list')
+            ).annotate(
+                available_rooms_count=Count(
+                    'rooms', 
+                    filter=Q(rooms__in=available_rooms),
+                    distinct=True
+                )
+            ).filter(available_rooms_count__gte=rooms_required)
+
+        # Use the specific Public Serializer
+        from .serializers import HotelSearchSerializer
+        serializer = HotelSearchSerializer(queryset, many=True, context={'request': request})
+        
+        return Response({
+            "count": queryset.count(),
+            "results": serializer.data,
+            "params": {
+                "location": location,
+                "dates": f"{check_in} to {check_out}" if check_in else "Any dates",
+                "guests": guests
+            }
+        })
+    
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='top-destinations')
+    def top_destinations(self, request):
+        """
+        Returns Destinations with:
+        1. City-wise Counts (Hotels & Restaurants in that City)
+        2. State-wise Counts (Hotels & Restaurants in that State)
+        3. Rating, State Name, Country Name
+        """
+        all_destinations = Destination.objects.all()
+
+        
+        # CITY-WISE DATA
+        
+        
+        # 1. Hotels grouped by City
+        city_hotel_stats = (
+            Hotel.objects.filter(status='available')
+            .annotate(clean_city=Lower(Trim('city')))
+            .values('clean_city')
+            .annotate(
+                total=Count('id'),
+                avg_rating=Avg('reviews__rating'),
+                state_name=Max('state'),   # Fetch State name to link with State counts
+                country_name=Max('country')
+            )
+        )
+        
+        # Map: {'jaipur': {'total': 5, 'state': 'Rajasthan', ...}}
+        city_hotel_map = {
+            item['clean_city']: {
+                'count': item['total'],
+                'rating': round(item['avg_rating'], 1) if item['avg_rating'] else 4.5,
+                'state': item['state_name'],
+                'country': item['country_name']
+            }
+            for item in city_hotel_stats if item['clean_city']
+        }
+
+        # Restaurants grouped by City
+        city_resto_stats = (
+            Restaurant.objects.filter(status='open')
+            .annotate(clean_city=Lower(Trim('city')))
+            .values('clean_city')
+            .annotate(total=Count('id'))
+        )
+        city_resto_map = {
+            item['clean_city']: item['total']
+            for item in city_resto_stats if item['clean_city']
+        }
+
+        # STATE-WISE DATA 
+
+        # Hotels grouped by State 
+        state_hotel_stats = (
+            Hotel.objects.filter(status='available')
+            .annotate(clean_state=Lower(Trim('state')))
+            .values('clean_state')
+            .annotate(total=Count('id'))
+        )
+        # Map: {'rajasthan': 50, 'delhi': 20}
+        state_hotel_map = {
+            item['clean_state']: item['total']
+            for item in state_hotel_stats if item['clean_state']
+        }
+
+        #  Restaurants grouped by State
+        state_resto_stats = (
+            Restaurant.objects.filter(status='open')
+            .annotate(clean_state=Lower(Trim('state')))
+            .values('clean_state')
+            .annotate(total=Count('id'))
+        )
+        state_resto_map = {
+            item['clean_state']: item['total']
+            for item in state_resto_stats if item['clean_state']
+        }
+
+
+        # MERGE EVERYTHING
+
+        results = []
+
+        for dest in all_destinations:
+            # 1. Identify City
+            search_city = dest.name.lower().strip()
+            
+            # 2. Get City Data
+            h_data = city_hotel_map.get(search_city)
+            r_count = city_resto_map.get(search_city, 0)
+
+            if h_data:
+                # Basic City Info
+                dest.hotel_count = h_data['count']
+                dest.restaurant_count = r_count
+                dest.rating = h_data['rating']
+                dest.state = h_data['state']
+                dest.country = h_data['country']
+
+                # 3. Identify State (from the Hotel Data we just found)
+                state_name = h_data['state']
+                
+                # 4. Get State-wise Totals
+                if state_name:
+                    search_state = state_name.lower().strip()
+                    dest.state_hotel_count = state_hotel_map.get(search_state, 0)
+                    dest.state_restaurant_count = state_resto_map.get(search_state, 0)
+                else:
+                    dest.state_hotel_count = 0
+                    dest.state_restaurant_count = 0
+
+                results.append(dest)
+        
+        # Sort by City Hotel Count
+        results.sort(key=lambda x: x.hotel_count, reverse=True)
+
+        serializer = DestinationSerializer(results, many=True, context={'request': request})
+        return Response(serializer.data)
 
 
 class RoomCategoryViewSet(ProtectedModelViewSet):
@@ -822,3 +1026,188 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
 
         return Response(data)
 
+
+
+
+class FeaturedListingView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Logic to mix 7/8 or 6/9
+        # Randomly choose ek combination
+        combinations = [(7, 8), (8, 7), (9, 6), (6, 9)]
+        num_hotels, num_restaurants = random.choice(combinations)
+
+        # --- Fetch Hotels ---
+        # Annotate karte hue taaki DB queries kam ho (Optimization)
+        # min_price: RoomCategory se sabse kam price
+        # avg_rating: HotelReview se average rating
+        hotels = Hotel.objects.filter(status='available').annotate(
+            min_price=Min('room_categories__price_per_night'),
+            avg_rating=Avg('reviews__rating'),
+            total_reviews=Count('reviews')
+        ).order_by('?')[:num_hotels] # order_by('?') shuffles result in DB
+
+        # --- Fetch Restaurants ---
+        restaurants = Restaurant.objects.filter(status='open').order_by('?')[:num_restaurants]
+
+        # --- Serialize Data ---
+        hotel_data = HotelListingSerializer(hotels, many=True, context={'request': request}).data
+        restaurant_data = RestaurantListingSerializer(restaurants, many=True, context={'request': request}).data
+
+        # --- Combine and Shuffle ---
+        combined_data = hotel_data + restaurant_data
+        random.shuffle(combined_data) # Python level pe shuffle taaki mix ho jaye
+
+        return Response(combined_data)
+    
+
+class DownloadAndroidAppView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Database se latest config nikalo
+        app_config = MobileAppConfig.objects.first()
+        
+        if app_config and app_config.android_apk:
+            file_handle = app_config.android_apk.open()
+            
+            # 'as_attachment=True' hi file ko download karwata hai
+            response = FileResponse(file_handle, as_attachment=True)
+            
+            # Optional: Filename set karna
+            response['Content-Disposition'] = f'attachment; filename="HMS.apk"'
+            return response
+        else:
+            return Response({"error": "APK file not found on server"}, status=404)
+
+class DownloadIOSAppView(APIView):
+    permission_classes = [AllowAny]  # Authentication hatane ke liye
+
+    def get(self, request):
+        app_config = MobileAppConfig.objects.first()
+        
+        if app_config and app_config.ios_ipa:
+            # File open karo
+            file_handle = app_config.ios_ipa.open()
+            
+            # FileResponse return karo
+            response = FileResponse(file_handle, as_attachment=True)
+            
+            # Browser ko batane ke liye ki ye .ipa file h
+            # 'TravelApp.ipa' wo naam h jo user ke phone me save hoga
+            response['Content-Disposition'] = 'attachment; filename="HMS.ipa"'
+            
+            return response
+        else:
+            return Response({"error": "iOS IPA file not found on server"}, status=404)
+        
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter
+class PackageViewSet(ProtectedModelViewSet):
+    # 1. Base Queryset
+    queryset = Package.objects.filter(is_active=True).order_by('-created_at')
+    serializer_class = PackageSerializer
+    model_name = 'Package'
+    lookup_field = 'slug'
+
+    # 2. Filter Backends (SearchFilter add kiya hai taaki search bar kaam kare)
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    
+    # 3. Exact Filters (Dropdowns ke liye)
+    # 'departure_city' add kiya hai taaki "From Delhi" wala filter chale
+    filterset_fields = ['package_type', 'category', 'departure_city']
+
+    # 4. Smart Search (Text typing ke liye - "To" field)
+    search_fields = ['name', 'locations', 'description']
+
+    def get_queryset(self):
+        # Base queryset uthao
+        qs = super().get_queryset() # ya Package.objects.filter(is_active=True).order_by('-created_at')
+        
+        # --- Travellers Logic (New) ---
+        # Agar user bhejta hai ?travellers=4
+        travellers = self.request.query_params.get('travellers')
+        
+        if travellers:
+            try:
+                count = int(travellers)
+                # Check karo: Ya to seats Unlimited hon (null) YA seats count se zyada hon
+                qs = qs.filter(Q(total_seats__gte=count) | Q(total_seats__isnull=True))
+            except ValueError:
+                pass # Agar user ne number nahi bheja to ignore karo
+
+        return qs
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return super().get_permissions()
+
+    # def get_queryset(self):
+    #     # Public Queryset
+    #     qs = Package.objects.filter(is_active=True)
+        
+    #     # Filter by Type (International / Domestic)
+    #     # Usage: /api/packages/?type=international
+    #     p_type = self.request.query_params.get('type')
+    #     if p_type:
+    #         qs = qs.filter(package_type__iexact=p_type)
+            
+        return qs
+    
+    # def get_permissions(self):
+    #     # Public users (Bina login) sirf dekh sakte hain (GET)
+    #     if self.action in ['list', 'retrieve']:
+    #         return [AllowAny()]
+    #     # Create/Update/Delete ke liye Login zaruri hai
+    #     return [IsAuthenticated()]
+
+    # def get_queryset(self):
+    #     """
+    #     Logic:
+    #     1. Public User -> Dekhega SAARE Active Packages.
+    #     2. Superuser -> Dekhega SAB Kuch.
+    #     3. Hotel Admin -> Dekhega SIRF KHUD ke banaye hue packages.
+    #     """
+    #     user = self.request.user
+    #     qs = Package.objects.all().order_by('-created_at')
+
+    #     # Public User (Anonymous)
+    #     if not user.is_authenticated:
+    #         return qs.filter(is_active=True)
+
+    #     # Superuser (Boss)
+    #     if user.is_superuser:
+    #         return qs
+
+    #     # Hotel Admin (Khud ka maal dekhega)
+    #     if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+    #         return qs.filter(owner=user)
+        
+    #     # Staff (Agar staff access hai to wo apne admin ke packages dekhega)
+    #     if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+    #          return qs.filter(owner=user.staff_profile.hotel.owner)
+
+    #     # Fallback for Public active packages if user fits none above
+    #     return qs.filter(is_active=True)
+
+    # def perform_create(self, serializer):
+    #     """
+    #     Jab Package create ho, to Owner apne aap logged-in Admin set ho jaye.
+    #     """
+    #     user = self.request.user
+        
+    #     if user.is_superuser:
+    #         # Superuser can create, but ideally should assign via serializer if needed.
+    #         # Here keeping it simple: Superuser becomes owner
+    #         serializer.save(owner=user)
+            
+    #     elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
+    #         # Admin becomes owner
+    #         serializer.save(owner=user)
+            
+    #     else:
+    #         # Koi aur create nahi kar sakta
+    #         from rest_framework.exceptions import PermissionDenied
+    #         raise PermissionDenied("Only Admins can create packages.")
