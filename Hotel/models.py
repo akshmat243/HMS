@@ -1,13 +1,28 @@
 import uuid
 from django.db import models
 from django.utils.text import slugify
-from django.db import models, transaction
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 # from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
+class Destination(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)  # e.g. "Goa", "Delhi"
+    slug = models.SlugField(unique=True, blank=True)
+    image = models.ImageField(upload_to='destinations/')  # Yaha upload hogi City ki photo
+    description = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True) 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
 
 class Hotel(models.Model):
     STATUS_CHOICES = [
@@ -26,6 +41,7 @@ class Hotel(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
+    amenities = models.TextField(help_text="Comma-separated list of amenities")
     address = models.TextField()
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=100)
@@ -528,3 +544,113 @@ class RoomServiceStage(models.Model):
 
     def __str__(self):
         return f"{self.service.service_code} - {self.stage}"
+    
+
+
+class MobileAppConfig(models.Model):
+    # Singleton pattern: Hum ensure karenge ki sirf ek hi active row ho
+    android_apk = models.FileField(upload_to='apps/android/', blank=True, null=True)
+    ios_app_url = models.FileField(upload_to='apps/ios/', blank=True, null=True)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Mobile App Configuration"
+
+    class Meta:
+        verbose_name = "App Settings"
+
+from django.core.validators import MinValueValidator
+from django.db import models
+from django.core.validators import MinValueValidator
+from django.utils.text import slugify
+from django.contrib.auth import get_user_model
+import uuid
+
+User = get_user_model()
+
+class Package(models.Model):
+    # --- CHOICES ---
+    PACKAGE_TYPE_CHOICES = [
+        ('international', 'International'),
+        ('domestic', 'Domestic'),
+    ]
+
+    CATEGORY_CHOICES = [
+        ('destination', 'Top Destination'), # Left Side Cards (e.g. Maldives)
+        ('theme', 'Theme'),    # Right Side List (e.g. Honeymoon)
+    ]
+    
+    UNIT_CHOICES = [
+        ('per_person', 'Per Person'),    # 1 Person cost
+        ('per_couple', 'Per Couple'),    # 2 Person cost
+        ('fixed', 'Fixed Price'),        # Family/Group cost
+    ]
+
+    # --- FIELDS ---
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    owner = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='packages',
+        limit_choices_to={'role__name': 'Admin'},
+        help_text="The admin created this package"
+    )
+
+    name = models.CharField(max_length=150) # e.g. "Magical Maldives"
+    slug = models.SlugField(unique=True, blank=True)
+
+    # UI Logic: Card vs List
+    category = models.CharField(
+        max_length=20, 
+        choices=CATEGORY_CHOICES, 
+        default='destination',
+        help_text="Select 'Top Destination' for main cards, 'Theme' for side list"
+    )
+    
+    # Locations String
+    locations = models.CharField(max_length=255, help_text="e.g. Dubai | Kashmir | Kerala")
+
+    # Search Logic: "From" City
+    departure_city = models.CharField(max_length=100, default="Delhi", help_text="Trip starts from?")
+    
+    # Search Logic: Duration
+    duration_days = models.IntegerField(default=3, help_text="How many days is the trip?")
+    
+    # --- PRICING LOGIC  ---
+    price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    price_unit = models.CharField(
+        max_length=20, 
+        choices=UNIT_CHOICES, 
+        default='per_person',
+        help_text="Is this price for 1 person or a couple?"
+    )
+
+    members_included = models.IntegerField(
+        default=1, 
+        help_text="1 for Per Person, 2 for Couple, 4 for Family Fixed"
+    )
+
+    # Optional: Agar limited seats hain (Search filter ke liye)
+    total_seats = models.PositiveIntegerField(null=True, blank=True, help_text="Leave blank if unlimited seats")
+
+    # --- META & INFO ---
+    cover_image = models.ImageField(upload_to='packages/covers/')
+    package_type = models.CharField(max_length=20, choices=PACKAGE_TYPE_CHOICES, default='domestic')
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            if Package.objects.filter(slug=base_slug).exists():
+                self.slug = f"{base_slug}-{str(uuid.uuid4())[:4]}"
+            else:
+                self.slug = base_slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} - ₹{self.price}/{self.price_unit}"

@@ -1,5 +1,11 @@
 from django.contrib import admin
-from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, DiscountRule
+from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, DiscountRule, Restaurant, BookingCallback
+
+@admin.register(Restaurant)
+class RestaurantAdmin(admin.ModelAdmin):
+    list_display = ('name', 'city', 'state', 'country', 'email')
+    search_fields = ('name', 'city', 'state', 'country')
+    list_filter = ('city', 'state', 'country')
 
 @admin.register(MenuCategory)
 class MenuCategoryAdmin(admin.ModelAdmin):
@@ -75,3 +81,14 @@ class DiscountRuleAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     search_fields = ('name',)
     ordering = ('min_amount',)
+
+
+@admin.register(BookingCallback)
+class BookinCallbackAdmin(admin.ModelAdmin):
+    list_display = ('restaurant_name',
+    'phone_number',
+    'preferred_time',
+    'created_at',
+    'is_resolved',)
+    list_filter = ('is_resolved',)
+    search_fields = ('restaurant_name',)

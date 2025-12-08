@@ -2,19 +2,85 @@ from MBP.views import ProtectedModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from datetime import datetime
+from django.utils.text import slugify
+
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant, BookingCallback
 )
 from .serializers import (
     MenuCategorySerializer, MenuItemSerializer, TableSerializer,
     RestaurantOrderSerializer, OrderItemSerializer, TableReservationSerializer,
-    RestaurantDashboardSerializer
+    RestaurantDashboardSerializer, RestaurantSerializer, BookingCallbackSerializer,TableSearchSerializer
 )
-from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
+from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper,Count,Q
 from datetime import date
 from Billing.models import Payment
 from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework import generics, filters
 
+
+class RestaurantViewSet(ProtectedModelViewSet):
+    queryset = Restaurant.objects.all()
+    serializer_class = RestaurantSerializer
+    model_name = 'Restaurant'
+    lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+
+        # ✅ Superuser can see all Restaurants
+        if user.is_superuser:
+            return Restaurant.objects.all()
+
+        # ✅ Admins can see only their own Restaurant
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return Restaurant.objects.filter(owner=user)
+
+        # ✅ Staff can see their Restaurant (if linked)
+        if hasattr(user, 'staff_profile') and user.staff_profile.Restaurant:
+            return Restaurant.objects.filter(id=user.staff_profile.Restaurant.id)
+
+        return Restaurant.objects.none()
+    
+    @action(detail=False, methods=['get'], url_path='stats')
+    def Restaurant_stats(self, request):
+        """
+        Custom endpoint to show Restaurant statistics.
+        Example: /api/Restaurants/stats/
+        """
+        qs = self.get_queryset()
+
+        # Aggregate counts by status
+        total_Restaurants = qs.count()
+        status_counts = qs.values('status').annotate(total=Count('status'))
+
+        stats = {
+            'total_Restaurants': total_Restaurants,
+            'open': 0,
+            # 'maintenance': 0,
+            'closed': 0
+        }
+
+        for entry in status_counts:
+            stats[entry['status']] = entry['total']
+
+        return Response(stats, status=status.HTTP_200_OK)
+
+    def perform_create(self, serializer):
+        # Auto-generate slug if not provided
+        name = serializer.validated_data.get('name')
+        slug = slugify(name)
+
+        # Ensure only one Restaurant per admin
+        owner = serializer.validated_data.get('owner')
+        if owner and Restaurant.objects.filter(owner=owner).exists():
+            return Response(
+                {"error": f"Admin {owner.full_name} already owns a Restaurant."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save(slug=slug)
 
 class MenuCategoryViewSet(ProtectedModelViewSet):
     queryset = MenuCategory.objects.all()
@@ -330,3 +396,42 @@ class TableReservationViewSet(ProtectedModelViewSet):
         return qs.none()
 
     
+class BookingCallbackView(generics.CreateAPIView):
+    """
+    Public API to submit a callback request.
+    No Authentication required.
+    """
+    queryset = BookingCallback.objects.all()
+    serializer_class = BookingCallbackSerializer
+    permission_classes = [AllowAny]
+
+
+class PublicTableSearchView(generics.ListAPIView):
+    """
+    Public API to search available Tables based on City.
+    Uses Table model but filters via connected Hotel's city.
+    """
+    serializer_class = TableSearchSerializer
+    permission_classes = [AllowAny] # Login jaruri nahi
+
+    def get_queryset(self):
+        # Sirf wahi tables dikhayenge jo 'available' hain
+        queryset = Table.objects.filter(status='available')
+
+        # User se query params lena (Image 2 ke according)
+        city_query = self.request.query_params.get('city', None)
+        people_count = self.request.query_params.get('people', None)
+
+        # 1. City Filter (Hotel model ke through)
+        if city_query:
+            queryset = queryset.filter(hotel__city__icontains=city_query)
+
+        # 2. People Filter (Table Capacity ke hisaab se)
+        # Agar user 4 logo ke liye table dhund rha h, to capacity >= 4 honi chahiye
+        if people_count:
+            try:
+                queryset = queryset.filter(capacity__gte=int(people_count))
+            except ValueError:
+                pass # Agar user ne number nahi bheja to ignore karo
+
+        return queryset

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination,MobileAppConfig,Package
 
 class GuestInline(admin.TabularInline):
     model = Guest
@@ -96,3 +96,32 @@ class GuestAdmin(admin.ModelAdmin):
     list_filter = ['gender']
     readonly_fields = ['slug']
     ordering = ['first_name']
+
+
+@admin.register(Destination)
+class DestinationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'image')   # admin list columns
+    search_fields = ('name',)
+    readonly_fields = ('slug',)  # slug & preview read-only
+    # prepopulated_fields = {'slug': ('name',)}     # Auto-slug from name
+    ordering = ('name',)
+
+@admin.register(MobileAppConfig)
+class MobileAppConfigAdmin(admin.ModelAdmin):
+    list_display = ('id', 'updated_at')
+    
+    # Ye optional hai: Agar tu chahta hai admin panel me "Add" ka button
+    # gayab ho jaye agar 1 object pehle se bana hua hai (Taaki sirf ek hi config rahe)
+    def has_add_permission(self, request):
+        # Agar pehle se koi object hai, to naya add mat karne do
+        if MobileAppConfig.objects.exists():
+            return False
+        return True
+    
+@admin.register(Package)
+class PackageAdmin(admin.ModelAdmin):
+    list_display = ('name', 'package_type', 'price')   # admin list columns
+    search_fields = ('name','locations')
+    readonly_fields = ('slug',)  # slug & preview read-only
+    # prepopulated_fields = {'slug': ('name',)}     # Auto-slug from name
+    ordering = ('name',)

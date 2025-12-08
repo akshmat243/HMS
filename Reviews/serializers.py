@@ -60,3 +60,50 @@ class ServiceReviewSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+
+# Serializer for Public Display
+class UnifiedReviewSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    type = serializers.CharField()  # 'hotel' ya 'restaurant' batane ke liye
+    
+    # User Details
+    user_name = serializers.SerializerMethodField()
+    
+    # Review Details
+    rating = serializers.IntegerField()
+    comment = serializers.CharField()
+    date = serializers.DateTimeField()
+    
+    # Card pe kya dikhana hai (Hotel Name ya Dish Name)
+    entity_name = serializers.SerializerMethodField()
+    entity_image = serializers.SerializerMethodField()
+
+    def get_user_name(self, obj):
+        if obj.user:
+            return obj.user.get_full_name() or obj.user.username
+        return "Guest User"
+
+    def get_entity_name(self, obj):
+        # Agar Hotel Review hai
+        if hasattr(obj, 'hotel'):
+            return obj.hotel.name
+        # Agar Restaurant/Menu Review hai
+        if hasattr(obj, 'menu_item') and obj.menu_item:
+            return obj.menu_item.name
+        return "Service"
+
+    def get_entity_image(self, obj):
+        request = self.context.get('request')
+        image = None
+        
+        # Hotel Image
+        if hasattr(obj, 'hotel') and obj.hotel.cover_image:
+            image = obj.hotel.cover_image
+        # Menu Item Image
+        elif hasattr(obj, 'menu_item') and obj.menu_item and obj.menu_item.image:
+            image = obj.menu_item.image
+            
+        if image and request:
+            return request.build_absolute_uri(image.url)
+        return None

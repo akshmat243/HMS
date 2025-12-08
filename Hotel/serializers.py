@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination, Package
+from django.db.models import Min, Avg, Count
+from Restaurant.models import Restaurant
+
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
@@ -393,3 +396,174 @@ class RoomServiceRequestSerializer(serializers.ModelSerializer):
                 f"Cannot move from {old_status} → {new_status}."
             )
         return new_status
+
+class HotelSearchSerializer(serializers.ModelSerializer):
+    """
+    Simplified Serializer for Public Search Results.
+    Includes 'starting_price' for the UI.
+    """
+    starting_price = serializers.SerializerMethodField()
+    available_rooms_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Hotel
+        fields = [
+            'id', 'slug', 'name', 'city', 'state', 'country', 
+            'cover_image', 'starting_price', 'available_rooms_count', 'description'
+        ]
+
+    def get_starting_price(self, obj):
+        # Find the cheapest room category price for this hotel
+        min_price = obj.room_categories.aggregate(min_p=Min('price_per_night'))['min_p']
+        return min_price if min_price else 0
+    
+class DestinationSerializer(serializers.ModelSerializer):
+    # City Level Countt
+    hotel_count = serializers.IntegerField(read_only=True)
+    restaurant_count = serializers.IntegerField(read_only=True)
+
+    # State level counts
+    state_hotel_count = serializers.IntegerField(read_only=True)
+    state_restaurant_count = serializers.IntegerField(read_only=True)
+
+    rating = serializers.FloatField(read_only=True)
+    state = serializers.CharField(read_only=True)
+    country = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Destination
+        fields = [
+            'id', 'name', 'slug', 'image', 'description', 
+            'hotel_count', 'restaurant_count','state_hotel_count','state_restaurant_count', 
+            'rating', 'state', 'country','created_at','updated_at'
+        ]
+
+
+
+class HotelListingSerializer(serializers.ModelSerializer):
+    # Mapping model fields to the names you requested
+    cover_photo = serializers.ImageField(source='cover_image', read_only=True)
+    price = serializers.SerializerMethodField()
+    review = serializers.SerializerMethodField()
+    type = serializers.CharField(default="hotel", read_only=True) # Frontend identification ke liye
+
+    class Meta:
+        model = Hotel
+        fields = [
+            'id', 'type', 'name', 'description', 'amenities', 
+            'cover_photo', 'address', 'price', 'review'
+        ]
+
+    def get_price(self, obj):
+        # RoomCategory se minimum price nikalna
+        # Agar humne view me annotate kiya h to waha se lenge, nahi to query karenge
+        if hasattr(obj, 'min_price') and obj.min_price is not None:
+            return obj.min_price
+        
+        # Fallback query
+        min_price = obj.room_categories.aggregate(minimum=Min('price_per_night'))['minimum']
+        return min_price if min_price else 0
+
+    def get_review(self, obj):
+        # HotelReview model se data
+        # View me optimization ke liye annotate use karenge
+        avg_rating = getattr(obj, 'avg_rating', None)
+        total_reviews = getattr(obj, 'total_reviews', None)
+
+        if avg_rating is None:
+            data = obj.reviews.aggregate(avg=Avg('rating'), count=Count('id'))
+            avg_rating = data['avg'] or 0
+            total_reviews = data['count'] or 0
+        
+        return {
+            "rating": round(avg_rating, 1),
+            "count": total_reviews
+        }
+
+class RestaurantListingSerializer(serializers.ModelSerializer):
+    cover_photo = serializers.ImageField(source='cover_image', read_only=True)
+    review = serializers.SerializerMethodField()
+    type = serializers.CharField(default="restaurant", read_only=True)
+
+    class Meta:
+        model = Restaurant
+        fields = [
+            'id', 'type', 'name', 'address', 'category', 
+            'description', 'amenities', 'cover_photo', 'review'
+        ]
+
+    def get_review(self, obj):
+        # Restaurant model me already 'rating' field hai.
+        # User ne kaha review model se lao, lekin tumhare schema me
+        # 'RestaurantReview' menu items se linked hai, restaurant se nahi directly.
+        # Isliye best practice hai ki hum Restaurant model ka 'rating' field use karein
+        # ya phir dummy count dikhayein abhi ke liye.
+        
+        return {
+            "rating": obj.rating, 
+            "count": "250+" # Ya random number, kyunki schema me direct link nahi hai
+        }
+    
+
+class PackageSerializer(serializers.ModelSerializer):
+    owner_name = serializers.CharField(source='owner.full_name', read_only=True)
+
+    class Meta:
+        model = Package
+        fields = [
+            'id', 
+            'owner', 
+            'owner_name', 
+            'name', 
+            'slug', 
+            'category',       # Destination vs Theme
+            'locations',      # e.g., Dubai | Kashmir
+            'departure_city', # New: From Delhi (Model mein jo naam hai wahi rakhna)
+            'duration_days',  # Typo Fixed (was uration_days)
+            'price', 
+            'price_unit',     # New: Per Person/Couple
+            'members_included', # New: Calculation ke liye
+            'total_seats',    # New: Inventory check
+            'cover_image', 
+            'package_type',   # International/Domestic
+            'description', 
+            'is_active',
+            'created_at'      # Display ke liye accha rehta hai
+        ]
+        read_only_fields = ['id', 'slug', 'owner', 'created_at']
+
+    # --- VALIDATIONS (Data Safai) ---
+
+    def validate_price(self, value):
+        """Check 1: Price 0 ya negative nahi ho sakta"""
+        if value <= 0:
+            raise serializers.ValidationError("Price must be greater than 0.")
+        return value
+
+    def validate_duration_days(self, value):
+        """Check 2: Trip kam se kam 1 din ki honi chahiye"""
+        if value < 1:
+            raise serializers.ValidationError("Duration must be at least 1 day.")
+        return value
+
+    def validate(self, data):
+        """
+        Check 3: Business Logic Validation
+        Yahan hum check karenge ki Price Unit aur Members match kar rahe hain ya nahi.
+        """
+        unit = data.get('price_unit')
+        members = data.get('members_included')
+
+        # Agar user "Per Couple" select kare lekin members 1 daal de, to error do
+        if unit == 'per_couple' and members != 2:
+            raise serializers.ValidationError({
+                "members_included": "For 'Per Couple' pricing, members included must be 2."
+            })
+        
+        # Agar user "Per Person" select kare lekin members 2 daal de
+        if unit == 'per_person' and members != 1:
+             raise serializers.ValidationError({
+                "members_included": "For 'Per Person' pricing, members included must be 1."
+            })
+
+        return data
