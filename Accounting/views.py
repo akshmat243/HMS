@@ -107,13 +107,14 @@ class DashboardStatsView(APIView):
         room_revenue = Decimal('0')
         if booking_type:
             # Step 1: Filter Bookings (All or Hotel Specific)
-            # ✅ Zaroori FIX: .values_list('pk', flat=True) se sirf UUIDs aayengi.
+            #  .values_list('pk', flat=True) se sirf UUIDs aayengi.
             target_booking_ids = Booking.objects.filter(**booking_filter).values_list('pk', flat=True)
             room_revenue = Invoice.objects.filter(
             content_type=booking_type,
             # object_id__in mein sirf IDs honi chahiye
             object_id__in=target_booking_ids, 
-            issued_at__range=[start_date, end_date]
+            issued_at__range=[start_date, end_date],
+            status='paid'
         ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
 
         # B. Restaurant Revenue
@@ -123,7 +124,8 @@ class DashboardStatsView(APIView):
             restaurant_revenue = Invoice.objects.filter(
                 content_type=order_type,
                 object_id__in=target_orders,
-                issued_at__range=[start_date, end_date]
+                issued_at__range=[start_date, end_date],
+                status='paid'
             ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
 
         # C. Event Revenue
@@ -133,7 +135,8 @@ class DashboardStatsView(APIView):
             event_revenue = Invoice.objects.filter(
                 content_type=event_type,
                 object_id__in=target_events,
-                issued_at__range=[start_date, end_date]
+                issued_at__range=[start_date, end_date],
+                status='paid'
             ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
 
         total_revenue = room_revenue + restaurant_revenue + event_revenue
