@@ -47,3 +47,27 @@ class TransactionSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(f"Insufficient funds. Current balance is ₹{current_balance}.")
 
         return data
+
+
+class DashboardStatsSerializer(serializers.Serializer):
+    """
+    Serializer to define the structure of the dashboard JSON response.
+    Mainly for documentation and validation purposes.
+    """
+    room_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    restaurant_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    staff_costs = serializers.DecimalField(max_digits=12, decimal_places=2)
+    operating_expenses = serializers.DecimalField(max_digits=12, decimal_places=2)
+    net_profit = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class MonthlyReportSerializer(serializers.Serializer):
+    """
+    Serializer for the list of monthly history at the bottom of the dashboard.
+    """
+    month = serializers.CharField()
+    year = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    expenses = serializers.DecimalField(max_digits=12, decimal_places=2)
+    profit = serializers.DecimalField(max_digits=12, decimal_places=2)
+    status = serializers.CharField()
