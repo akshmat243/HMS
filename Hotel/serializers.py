@@ -260,7 +260,8 @@ class BookingSerializer(serializers.ModelSerializer):
             object_id=booking.id,
             issued_to=booking.user,
             customer_name=f"{booking.guests.first().first_name} {booking.guests.first().last_name}",
-            total_amount=booking.room.price_per_night,
+            # days = booking.total_nights,
+            total_amount=booking.room.price_per_night * booking.total_nights,
             status='unpaid'
         )
         InvoiceItem.objects.create(

@@ -1,6 +1,10 @@
 import uuid
 from django.db import models
 from django.utils.text import slugify
+from django.contrib.auth import get_user_model
+User = get_user_model()
+from Hotel.models import Hotel
+from django.conf import settings
 
 class Account(models.Model):
     ACCOUNT_TYPE_CHOICES = [
@@ -11,6 +15,13 @@ class Account(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    admin = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        related_name='accounts_managed' # Unique related_name to avoid conflict
+    )
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(unique=True, blank=True)
     type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES)
