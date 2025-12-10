@@ -34,6 +34,7 @@ class GuestServiceSerializer(serializers.ModelSerializer):
 
 
 class ServiceRequestSerializer(serializers.ModelSerializer):
+    icon = serializers.CharField(required=False, allow_blank=True)
 
     booking = serializers.SlugRelatedField(
         slug_field="booking_code",
@@ -67,7 +68,7 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
         model = ServiceRequest
         fields = "__all__"
         # lookup_field = "slug"
-        read_only_fields = ["guest_name", "guest_room", "slug", "status"]
+        read_only_fields = ["guest_name", "guest_room", "slug"]
 
     def validate_cost(self, value):
         if value < 0:

@@ -64,7 +64,6 @@ class GuestServiceViewSet(ProtectedModelViewSet):
 
 
 class ServiceRequestViewSet(ProtectedModelViewSet):
-    queryset = ServiceRequest.objects.all().order_by("-created_at")
     serializer_class = ServiceRequestSerializer
     model_name = "ServiceRequest"
     lookup_field = "slug"
@@ -72,14 +71,15 @@ class ServiceRequestViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        base_qs = ServiceRequest.objects.all().order_by("-created_at")
         
         if user.is_superuser:
-            return self.queryset
+            return base_qs
 
         if hasattr(user, 'role') and user.role.name.lower() == "admin":
-            return self.queryset.filter(created_by=user)
+            return base_qs.filter(created_by=user)
 
-        return self.queryset.none()
+        return base_qs.none()
 
     @action(detail=True, methods=["post"])
     def assign(self, request, slug=None):
