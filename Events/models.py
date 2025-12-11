@@ -67,7 +67,7 @@ class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, blank=True, null=True, unique=True)
-    
+    icon = models.CharField(max_length=50,blank=True, null=True)
     description = models.TextField(blank=True)
     event_type = models.ForeignKey(EventType, null=True, blank=True, on_delete=models.SET_NULL, related_name="events")
     venue = models.ForeignKey(Venue, null=True, blank=True, on_delete=models.SET_NULL, related_name="events")

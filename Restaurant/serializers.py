@@ -216,6 +216,9 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
         for item in items_data:
             OrderItem.objects.create(order=order, **item)
 
+        order.save()
+        order.refresh_from_db()
+
         return order
 
     def update(self, instance, validated_data):

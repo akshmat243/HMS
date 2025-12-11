@@ -64,46 +64,37 @@ class ServiceReviewSerializer(serializers.ModelSerializer):
 
 # Serializer for Public Display
 class UnifiedReviewSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    type = serializers.CharField()  # 'hotel' ya 'restaurant' batane ke liye
-    
-    # User Details
-    user_name = serializers.SerializerMethodField()
-    
-    # Review Details
-    rating = serializers.IntegerField()
     comment = serializers.CharField()
-    date = serializers.DateTimeField()
-    
-    # Card pe kya dikhana hai (Hotel Name ya Dish Name)
-    entity_name = serializers.SerializerMethodField()
-    entity_image = serializers.SerializerMethodField()
+    rating = serializers.IntegerField()
+    user_name = serializers.SerializerMethodField()
+    user_image = serializers.SerializerMethodField()
 
     def get_user_name(self, obj):
-        if obj.user:
-            return obj.user.get_full_name() or obj.user.username
-        return "Guest User"
+        if not obj.user:
+            return "Guest User"
 
-    def get_entity_name(self, obj):
-        # Agar Hotel Review hai
-        if hasattr(obj, 'hotel'):
-            return obj.hotel.name
-        # Agar Restaurant/Menu Review hai
-        if hasattr(obj, 'menu_item') and obj.menu_item:
-            return obj.menu_item.name
-        return "Service"
+        # CASE 1: If user has full_name FIELD (string)
+        if hasattr(obj.user, "full_name") and obj.user.full_name:
+            return obj.user.full_name
 
-    def get_entity_image(self, obj):
+        # CASE 2: If Django has full name function
+        try:
+            name = obj.user.get_full_name()
+            if name:
+                return name
+        except:
+            pass
+
+        # CASE 3: fallback → username
+        return obj.user.username
+
+    def get_user_image(self, obj):
         request = self.context.get('request')
-        image = None
-        
-        # Hotel Image
-        if hasattr(obj, 'hotel') and obj.hotel.cover_image:
-            image = obj.hotel.cover_image
-        # Menu Item Image
-        elif hasattr(obj, 'menu_item') and obj.menu_item and obj.menu_item.image:
-            image = obj.menu_item.image
-            
-        if image and request:
-            return request.build_absolute_uri(image.url)
+
+        try:
+            if obj.user.profile.profile_picture:
+                return request.build_absolute_uri(obj.user.profile.profile_picture.url)
+        except:
+            return None
+
         return None

@@ -10,8 +10,11 @@ from Hotel.models import Room
 from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Count
 from django.utils.dateparse import parse_date
-from django.utils import timezone
 
+
+# =========================================================
+# CATEGORY
+# =========================================================
 
 class MaintenanceCategoryViewSet(ProtectedModelViewSet):
     queryset = MaintenanceCategory.objects.all()
@@ -20,11 +23,23 @@ class MaintenanceCategoryViewSet(ProtectedModelViewSet):
     lookup_field = "slug"
 
     def get_queryset(self):
-        return self.queryset.filter(hotel=self.request.user.hotel)
+        user = self.request.user
+
+        if user.is_superuser:
+            return self.queryset
+
+        if hasattr(user, "hotel") and user.hotel:
+            return self.queryset.filter(hotel=user.hotel)
+
+        return self.queryset.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
 
+
+# =========================================================
+# FACILITY
+# =========================================================
 
 class FacilityViewSet(ProtectedModelViewSet):
     queryset = Facility.objects.all()
@@ -33,11 +48,23 @@ class FacilityViewSet(ProtectedModelViewSet):
     lookup_field = "slug"
 
     def get_queryset(self):
-        return self.queryset.filter(hotel=self.request.user.hotel)
+        user = self.request.user
+
+        if user.is_superuser:
+            return self.queryset
+
+        if hasattr(user, "hotel") and user.hotel:
+            return self.queryset.filter(hotel=user.hotel)
+
+        return self.queryset.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
 
+
+# =========================================================
+# EQUIPMENT
+# =========================================================
 
 class EquipmentViewSet(ProtectedModelViewSet):
     queryset = Equipment.objects.all()
@@ -46,37 +73,60 @@ class EquipmentViewSet(ProtectedModelViewSet):
     lookup_field = "slug"
 
     def get_queryset(self):
-        return self.queryset.filter(hotel=self.request.user.hotel)
+        user = self.request.user
+
+        if user.is_superuser:
+            return self.queryset
+
+        if hasattr(user, "hotel") and user.hotel:
+            return self.queryset.filter(hotel=user.hotel)
+
+        return self.queryset.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
 
 
+# =========================================================
+# MAINTENANCE TASK
+# =========================================================
+
 class MaintenanceTaskViewSet(ProtectedModelViewSet):
-    queryset = MaintenanceTask.objects.select_related('room', 'facility', 'equipment', 'guest', 'hotel').all()
+    queryset = MaintenanceTask.objects.select_related(
+        'room', 'facility', 'equipment', 'guest', 'hotel'
+    ).all()
     serializer_class = MaintenanceTaskSerializer
     model_name = "MaintenanceTask"
     lookup_field = "slug"
 
     def get_queryset(self):
         user = self.request.user
+        base_qs = self.queryset.order_by("-created_at")
 
-        # ADMIN → show all tasks of HIS hotel
-        if hasattr(user, 'hotel') and user.hotel:
-            return MaintenanceTask.objects.filter(hotel=user.hotel)
+        # 1️⃣ Superuser → can see all hotels
+        if user.is_superuser:
+            return base_qs
 
-        # STAFF → show only tasks assigned to HIM
-        return MaintenanceTask.objects.filter(assigned_to=user)
+        # 2️⃣ Admin → only his hotel
+        if hasattr(user, "role") and user.role.name.lower() == "admin":
+            if hasattr(user, "hotel") and user.hotel:
+                return base_qs.filter(hotel=user.hotel)
+            return base_qs.none()
 
-    # Assign task to staff (accept staff id or slug)
+        # 3️⃣ Staff → only assigned tasks
+        return base_qs.filter(assigned_to=user)
+
+    # --------------------------
+    # Assign task
+    # --------------------------
     @action(detail=True, methods=["post"])
     def assign(self, request, slug=None):
         task = self.get_object()
         staff_slug = request.data.get("assigned_to")
+
         if not staff_slug:
             return Response({"error": "assigned_to required"}, status=400)
 
-        # Accept UUID or slug; try to set assigned_to_id directly
         try:
             staff = User.objects.get(slug=staff_slug)
         except User.DoesNotExist:
@@ -88,19 +138,28 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
 
         return Response({"message": "Task assigned successfully"}, status=200)
 
+    # --------------------------
+    # Complete Task
+    # --------------------------
     @action(detail=True, methods=["post"])
     def complete(self, request, slug=None):
         task = self.get_object()
         task.status = "completed"
         task.save()
 
-        return Response({"message":"Task Mark as Completed"}, status=200)
+        return Response({"message": "Task marked as completed"}, status=200)
 
-
+    # --------------------------
+    # Dashboard Data
+    # --------------------------
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):
-        hotel = request.user.hotel
-        qs = MaintenanceTask.objects.filter(hotel=hotel)
+        user = request.user
+
+        if user.is_superuser:
+            qs = MaintenanceTask.objects.all()
+        else:
+            qs = MaintenanceTask.objects.filter(hotel=user.hotel)
 
         data = {
             "total_tasks": qs.count(),
@@ -109,26 +168,26 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
             "urgent_tasks": qs.filter(priority="high").count(),
         }
         return Response(data, status=200)
-    
 
-    #  CHANGE : API Room ko Available karne ke liye
+
+# =========================================================
+# MARK ROOM AVAILABLE
+# =========================================================
+
 class MarkRoomAvailableView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Frontend se room_slug bhejna hoga
         room_slug = request.data.get('room_slug')
-        
+
         if not room_slug:
             return Response({"error": "Room slug is required"}, status=400)
 
         try:
-            # Sirf user ke hotel ka room hona chahiye
             room = Room.objects.get(slug=room_slug, hotel=request.user.hotel)
         except Room.DoesNotExist:
             return Response({"error": "Room not found or access denied"}, status=404)
 
-        # Room status update
         room.status = 'available'
         room.save()
 
@@ -138,14 +197,15 @@ class MarkRoomAvailableView(APIView):
         }, status=200)
 
 
+# =========================================================
+# ROOM STATUS VIEW
+# =========================================================
+
 class RoomStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         hotel = request.user.hotel
-        
-        # ✅ STEP 1: Database se sirf wahi rooms lao jo abhi 'Maintenance' mode mein hain.
-        # Isse Reserved, Occupied aur Available apne aap filter out ho jayenge.
         rooms = Room.objects.filter(hotel=hotel, status='maintenance')
 
         data = []
@@ -156,22 +216,11 @@ class RoomStatusView(APIView):
             except RoomCleaningSchedule.DoesNotExist:
                 clean = None
 
-            # Check karo koi task pending/in-progress hai kya?
             issues = MaintenanceTask.objects.filter(
-                room=room,
-                status__in=["pending", "in_progress"]
+                room=room, status__in=["pending", "in_progress"]
             ).values_list("title", flat=True)
 
-            # ✅ STEP 2: Status Display Logic
-            # Room DB mein 'maintenance' hi hai, par hum frontend ko alag status bhejenge
-            
-            if issues:
-                # Agar Tasks bache hain -> "Maintenance" (Red/Orange)
-                final_status = "maintenance"
-            else:
-                # Agar Tasks complete ho gaye hain (list empty) -> "Clean" (Green Tick)
-                # Ye tab tak dikhega jab tak tum 'Mark Available' API hit nahi karte
-                final_status = "clean"
+            final_status = "maintenance" if issues else "clean"
 
             data.append({
                 "room_number": room.room_number,
@@ -180,44 +229,27 @@ class RoomStatusView(APIView):
                 "last_cleaned": clean.last_cleaned if clean else None,
                 "next_cleaning": clean.next_cleaning if clean else None,
                 "active_issues": list(issues),
-                "status": final_status,  # <--- Ye frontend pe color decide karega
+                "status": final_status,
                 "room_slug": room.slug
             })
 
         return Response(data, status=200)
 
-    @staticmethod
-    def post(request):
-        room_id = request.data.get("room")
-        last_cleaned = request.data.get("last_cleaned")
-        next_cleaning = request.data.get("next_cleaning")
 
-        schedule, created = RoomCleaningSchedule.objects.get_or_create(
-            room_id=room_id,
-            hotel=request.user.hotel
-        )
-
-        schedule.last_cleaned = last_cleaned
-        schedule.next_cleaning = next_cleaning
-        schedule.save()
-
-        # Agar Cleaning schedule update kiya hai to room available kar do
-        # (Agar tumhara cleaning workflow 'Maintenance' status use karta hai)
-        room = Room.objects.get(id=room_id)
-        if room.status == 'maintenance':
-            room.status = 'available'
-            room.save()
-
-        return Response({"message": "Cleaning schedule updated"}, status=200)
-
+# =========================================================
+# MAINTENANCE REPORTS
+# =========================================================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def maintenance_reports(request):
-    hotel = request.user.hotel
-    tasks = MaintenanceTask.objects.filter(hotel=hotel)
+    user = request.user
 
-    # ---- Date Filter ----
+    if user.is_superuser:
+        tasks = MaintenanceTask.objects.all()
+    else:
+        tasks = MaintenanceTask.objects.filter(hotel=user.hotel)
+
     start = request.GET.get("start_date")
     end = request.GET.get("end_date")
 
@@ -227,7 +259,6 @@ def maintenance_reports(request):
     if end:
         filtered = filtered.filter(created_at__date__lte=parse_date(end))
 
-    # ---- Summary ----
     summary = {
         "total": tasks.count(),
         "pending": tasks.filter(status="pending").count(),
@@ -236,20 +267,14 @@ def maintenance_reports(request):
         "high_priority": tasks.filter(priority="high").count(),
     }
 
-    # ---- Status ----
     by_status = tasks.values("status").annotate(count=Count("id"))
-
-    # ---- Priority ----
     by_priority = tasks.values("priority").annotate(count=Count("id"))
-
-    # ---- Category ----
     by_category = (
         tasks.values("category__name")
         .annotate(count=Count("id"))
         .order_by("-count")
     )
 
-    # ---- Filtered tasks list ----
     filtered_list = filtered.values(
         "title",
         "status",

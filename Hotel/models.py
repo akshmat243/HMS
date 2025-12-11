@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from datetime import timedelta
 # from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
@@ -306,6 +307,9 @@ class Booking(models.Model):
             self.room.status = "available"
             self.room.save()
 
+    @property
+    def total_nights(self):
+        return (self.check_out - self.check_in).days
         
         
 class Guest(models.Model):

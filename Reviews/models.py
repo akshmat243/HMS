@@ -16,6 +16,7 @@ class HotelReview(models.Model):
     rating = models.PositiveIntegerField(default=5)  # 1 to 5
     comment = models.TextField(blank=True)
     date = models.DateTimeField(auto_now_add=True)
+    reply = models.TextField(blank=True, null=True, help_text="Admin reply to the review")
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -35,6 +36,7 @@ class RestaurantReview(models.Model):
     rating = models.PositiveIntegerField(default=5)
     comment = models.TextField(blank=True)
     date = models.DateTimeField(auto_now_add=True)
+    reply = models.TextField(blank=True, null=True, help_text="Admin reply to the review")
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -62,6 +64,7 @@ class ServiceReview(models.Model):
     rating = models.PositiveIntegerField(default=5)
     comment = models.TextField(blank=True)
     date = models.DateTimeField(auto_now_add=True)
+    reply = models.TextField(blank=True, null=True, help_text="Admin reply to the review")
 
     def save(self, *args, **kwargs):
         if not self.slug:
