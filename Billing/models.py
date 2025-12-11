@@ -5,6 +5,7 @@ from django.utils.text import slugify
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from django.core.exceptions import ValidationError
 
 User = get_user_model()
 
@@ -52,6 +53,13 @@ class Invoice(models.Model):
 
         return None'''
 
+    def clean(self):
+        super().clean()
+        if self.amount_paid and self.total_amount:
+            if self.amount_paid > self.total_amount:
+                raise ValidationError({
+                    'amount_paid': f"Amount Paid ({self.amount_paid}) cannot be greater than Total Amount ({self.total_amount})."
+                })
 
     def save(self, *args, **kwargs):
         if not self.slug:
