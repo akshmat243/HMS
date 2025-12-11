@@ -12,6 +12,7 @@ class MaintenanceCategory(models.Model):
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name="maintenance_categories")
     name = models.CharField(max_length=100)
     slug = models.SlugField(unique=True, blank=True)
+    icon = models.CharField(max_length=50)
     description = models.TextField(blank=True, null=True)
 
     class Meta:

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Notification, Message, Feedback
+from .models import Notification, Message, Feedback, Subscriber
 from django.utils.text import slugify
 import uuid
 
@@ -54,4 +54,15 @@ class FeedbackSerializer(serializers.ModelSerializer):
     def validate_rating(self, value):
         if not (1 <= value <= 5):
             raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value
+
+class NewsletterSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Subscriber
+        fields = ['email']
+
+    def validate_email(self, value):
+        if value.strip() == "":
+            raise serializers.ValidationError("Email cannot be empty.")
         return value

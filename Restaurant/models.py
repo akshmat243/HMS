@@ -6,8 +6,70 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 User = get_user_model()
+
+
+class Restaurant(models.Model):
+    STATUS_CHOICES = [
+        ('open', 'Open'),
+        # ('maintenance', 'Maintenance'),
+        ('closed', 'Closed'),
+    ]
+
+    CATEGORY_CHOICES = [
+        ('japanese', 'Japanese'),
+        ('Italian Fine Dining', 'italian fine dining'),
+        ('Seafood & Steakhouse', 'seafood & steakhouse'),
+        ('Modern European', 'modern european'),
+        ('American Comfort', 'american comfort'),
+        ('Indian', 'indian')
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='Restaurant',
+        limit_choices_to={'role__name': 'Admin'},
+        help_text="The admin user who owns this Restaurant"
+    )
+    name = models.CharField(max_length=255)
+    slug = models.SlugField(unique=True, blank=True)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='Indian')
+    amenities = models.TextField(help_text="Comma-separated list of amenities")
+    rating = models.DecimalField(
+    max_digits=2,
+    decimal_places=1,
+    validators=[MinValueValidator(1), MaxValueValidator(5)],
+    help_text="Rating must be between 1.0 and 5.0"
+)
+    address = models.TextField()
+    city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    country = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=10)
+    contact_number = models.CharField(max_length=15)
+    email = models.EmailField()
+    logo = models.ImageField(upload_to='restaurant/logos/', blank=True, null=True)
+    cover_image = models.ImageField(upload_to='restaurant/covers/', blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+            
+         # Enforce single hotel per admin
+        if self.owner and Restaurant.objects.exclude(id=self.id).filter(owner=self.owner).exists():
+            raise ValueError(f"Admin {self.owner.full_name} already owns a Restaurant.")
+        super().save(*args, **kwargs)
 
 class MenuCategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -316,3 +378,21 @@ class DiscountRule(models.Model):
         if self.max_amount and subtotal > self.max_amount:
             return False
         return subtotal >= self.min_amount
+
+class BookingCallback(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
+    restaurant_name = models.CharField(max_length=150) 
+    phone_number = models.CharField(max_length=15)
+    preferred_time = models.TimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_resolved = models.BooleanField(default=False) # CRM status ke liye
+
+    def __str__(self):
+        return f"Callback: {self.restaurant_name} - {self.phone_number}"
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = f"{self.restaurant_name}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)

@@ -10,5 +10,5 @@ router.register(r"event-types", EventTypeViewSet, basename="event-type")
 # router.register(r"event-bookings", BookingViewSet, basename="event-booking")
 
 urlpatterns = [
-    path("api/events/", include(router.urls)),
+    path("api/", include(router.urls)),
 ]
