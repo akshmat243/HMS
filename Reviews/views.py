@@ -106,7 +106,7 @@ class PublicReviewViewSet(ReadOnlyModelViewSet):
         Returns top reviews (rating >= 4) without any extra path.
         """
 
-        limit = 10
+        limit = 3
 
         # Fetch hotel reviews rating 4+
         hotel_reviews = list(
