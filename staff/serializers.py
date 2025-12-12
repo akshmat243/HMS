@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Staff, Attendance, Payroll, Leave
+from .models import Staff, Attendance, Payroll, Leave, StaffDocument
 from datetime import time
 from django.contrib.auth import get_user_model
 from Hotel.models import Hotel
@@ -38,6 +38,38 @@ class AttendanceSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class StaffDocumentSerializer(serializers.ModelSerializer):
+    document_type_display = serializers.CharField(
+        source="get_document_type_display", read_only=True
+    )
+    document_file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StaffDocument
+        fields = [
+            "id", "document_type", "document_type_display",
+            "document_number", "document_file", "document_file_url",
+            "issued_date", "expiry_date", "created_at"
+        ]
+
+    def get_document_file_url(self, obj):
+        if obj.document_file:
+            return obj.document_file.url
+        return None
+
+    def validate(self, data):
+        # prevent duplicate document type for a staff
+        staff = self.context.get("staff")
+        doc_type = data.get("document_type")
+
+        if staff and StaffDocument.objects.filter(staff=staff, document_type=doc_type).exists():
+            raise serializers.ValidationError(
+                {"document_type": "This document type is already uploaded for this staff."}
+            )
+        return data
+
+
+
 class StaffSerializer(serializers.ModelSerializer):
     # ✅ Slug inputs
     user_slug = serializers.SlugField(write_only=True, required=True)
@@ -57,6 +89,9 @@ class StaffSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(write_only=True, required=False)
     email = serializers.EmailField(write_only=True, required=False)
     phone = serializers.CharField(write_only=True, required=False)
+    
+    documents = StaffDocumentSerializer(many=True, write_only=True, required=False)
+    documents_data = StaffDocumentSerializer(source="documents", many=True, read_only=True)
 
     class Meta:
         model = Staff
@@ -67,11 +102,11 @@ class StaffSerializer(serializers.ModelSerializer):
             'designation', 'department', 'joining_date',
             'performance_score', 'status', 'shift_start', 'shift_end',
             'monthly_salary', 'profile_image', 'attendance_records',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'documents', 'documents_data'
         ]
         read_only_fields = [
             'slug', 'created_at', 'updated_at', 'performance_score',
-            'user', 'hotel'
+            'user', 'hotel', 'documents_data'
         ]
 
     def validate(self, data):
@@ -97,6 +132,7 @@ class StaffSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        documents_data = validated_data.pop("documents", [])
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
@@ -120,9 +156,14 @@ class StaffSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
         staff = Staff.objects.create(user=user, hotel=hotel, **validated_data)
+        
+        for doc in documents_data:
+            StaffDocument.objects.create(staff=staff, **doc)
+            
         return staff
 
     def update(self, instance, validated_data):
+        documents_data = validated_data.pop("documents", None)
         user_slug = validated_data.pop('user_slug', None)
         hotel_slug = validated_data.pop('hotel_slug', None)
 
@@ -170,6 +211,11 @@ class StaffSerializer(serializers.ModelSerializer):
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        
+        if documents_data is not None:
+            instance.documents.all().delete()
+            for doc in documents_data:
+                StaffDocument.objects.create(staff=instance, **doc)
 
         instance.save()
         return instance

@@ -1,6 +1,6 @@
 # staff/admin.py
 from django.contrib import admin
-from .models import Staff, Attendance, Payroll, Leave
+from .models import Staff, Attendance, Payroll, Leave, StaffDocument
 from django.utils.html import format_html
 from decimal import Decimal
 
@@ -78,3 +78,35 @@ class LeaveAdmin(admin.ModelAdmin):
     def reject_leaves(self, request, queryset):
         updated = queryset.update(status='rejected', approved_by=request.user)
         self.message_user(request, f"Rejected {updated} leave(s).")
+        
+
+@admin.register(StaffDocument)
+class StaffDocumentAdmin(admin.ModelAdmin):
+    list_display = (
+        "staff",
+        "document_type",
+        "document_number",
+        "issued_date",
+        "expiry_date",
+        "created_at",
+    )
+    list_filter = ("document_type", "staff__hotel", "created_at")
+    search_fields = (
+        "staff__user__full_name",
+        "staff__user__email",
+        "document_number",
+    )
+    autocomplete_fields = ("staff",)
+    readonly_fields = ("created_at",)
+
+    fieldsets = (
+        ("Document Information", {
+            "fields": ("staff", "document_type", "document_number"),
+        }),
+        ("File & Validity", {
+            "fields": ("document_file", "issued_date", "expiry_date"),
+        }),
+        ("Metadata", {
+            "fields": ("created_at",),
+        }),
+    )

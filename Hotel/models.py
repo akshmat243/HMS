@@ -332,6 +332,8 @@ class Guest(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
     id_proof_type = models.CharField(max_length=50, blank=True, null=True)
     id_proof_number = models.CharField(max_length=50, blank=True, null=True)
+    id_proof_file = models.FileField(upload_to="guest_docs/", null=True, blank=True)
+    
     special_request = models.TextField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
