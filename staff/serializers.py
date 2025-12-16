@@ -69,12 +69,11 @@ class StaffDocumentSerializer(serializers.ModelSerializer):
             )
         return data
 
-
+from django.db import transaction
 class StaffSerializer(serializers.ModelSerializer):
     # ---------------------------
     # Incoming slugs
     # ---------------------------
-    user_slug = serializers.SlugField(write_only=True, required=False)
     hotel_slug = serializers.SlugField(write_only=True, required=False)
     role_slug = serializers.SlugField(write_only=True, required=False)
 
@@ -89,31 +88,41 @@ class StaffSerializer(serializers.ModelSerializer):
     user_phone = serializers.CharField(source="user.phone", read_only=True)
 
     # ---------------------------
-    # User fields to update
+    # User fields (REQUIRED for create)
     # ---------------------------
-    full_name = serializers.CharField(write_only=True, required=False)
-    email = serializers.EmailField(write_only=True, required=False)
+    full_name = serializers.CharField(write_only=True)
+    email = serializers.EmailField(write_only=True)
     phone = serializers.CharField(write_only=True, required=False)
 
     # ---------------------------
     # Staff Documents (Nested)
     # ---------------------------
-    documents = StaffDocumentSerializer(write_only=True, many=True, required=False)
-    documents_data = StaffDocumentSerializer(source="documents", many=True, read_only=True)
+    documents = serializers.ListField(
+        child=serializers.DictField(),
+        write_only=True,
+        required=False
+    )
+    documents_data = serializers.SerializerMethodField(read_only=True)
+
+    def get_documents_data(self, obj):
+        return StaffDocumentSerializer(obj.documents.all(), many=True).data
 
     class Meta:
         model = Staff
         fields = [
             "id", "slug",
-            "user", "user_slug",
-            "hotel", "hotel_slug",
+            "user", "hotel",
             "user_full_name", "user_email", "user_phone",
+
             "full_name", "email", "phone",
+
             "designation", "department", "joining_date",
             "status", "shift_start", "shift_end",
             "monthly_salary", "profile_image",
+
+            "hotel_slug", "role_slug",
             "documents", "documents_data",
-            "role_slug",
+
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -125,39 +134,48 @@ class StaffSerializer(serializers.ModelSerializer):
     # VALIDATION
     # -----------------------------------
     def validate(self, data):
-        # salary validation
         if data.get("monthly_salary", 0) < 0:
             raise serializers.ValidationError({"monthly_salary": "Salary cannot be negative."})
 
-        # shift time validation
-        shift_start = data.get("shift_start")
-        shift_end = data.get("shift_end")
+        ss = data.get("shift_start")
+        se = data.get("shift_end")
 
-        if shift_start and shift_end:
-            if shift_start == shift_end:
-                raise serializers.ValidationError({"shift_end": "Shift end cannot be equal to start."})
+        if ss and se and ss == se:
+            raise serializers.ValidationError({"shift_end": "Shift end cannot be equal to start."})
 
         return data
 
     # -----------------------------------
-    # CREATE STAFF + USER + DOCUMENTS
+    # CREATE USER + STAFF + DOCUMENTS
     # -----------------------------------
+    @transaction.atomic
     def create(self, validated_data):
         documents = validated_data.pop("documents", [])
-        user_slug = validated_data.pop("user_slug", None)
         hotel_slug = validated_data.pop("hotel_slug", None)
         role_slug = validated_data.pop("role_slug", None)
 
-        # FETCH OR CREATE USER
-        if user_slug:
-            try:
-                user = User.objects.get(slug=user_slug)
-            except User.DoesNotExist:
-                raise serializers.ValidationError({"user_slug": "User not found."})
-        else:
-            raise serializers.ValidationError({"user_slug": "User slug is required."})
+        # -------------------------
+        # CREATE USER
+        # -------------------------
+        full_name = validated_data.pop("full_name")
+        email = validated_data.pop("email")
+        phone = validated_data.pop("phone", None)
 
-        # ROLE ASSIGN
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({"email": "User with this email already exists."})
+
+        # Generate random password
+        raw_password = "Welcome@123"  # In real scenarios, use a secure random generator
+
+        user = User.objects.create(
+            full_name=full_name,
+            email=email,
+            phone=phone,
+            is_active=True
+        )
+        user.set_password(raw_password)
+
+        # Assign role
         if role_slug:
             try:
                 role = Role.objects.get(slug=role_slug)
@@ -165,12 +183,11 @@ class StaffSerializer(serializers.ModelSerializer):
             except Role.DoesNotExist:
                 raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
-        # DEFAULT PASSWORD
-        default_password = "Welcome@123"
-        user.set_password(default_password)
         user.save()
 
-        # HOTEL ASSIGN
+        # -------------------------
+        # Assign hotel
+        # -------------------------
         hotel = None
         if hotel_slug:
             try:
@@ -178,27 +195,37 @@ class StaffSerializer(serializers.ModelSerializer):
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
+        # -------------------------
         # CREATE STAFF
-        staff = Staff.objects.create(user=user, hotel=hotel, **validated_data)
+        # -------------------------
+        staff = Staff.objects.create(
+            user=user,
+            hotel=hotel,
+            **validated_data
+        )
 
+        # -------------------------
         # CREATE DOCUMENTS
+        # -------------------------
         for doc in documents:
             StaffDocument.objects.create(staff=staff, **doc)
 
+        # -------------------------
         # SEND LOGIN EMAIL
+        # -------------------------
         send_mail(
             subject="Your Staff Login Credentials",
             message=f"""
-Welcome {user.full_name},
+Hello {user.full_name},
 
-Your staff account has been created.
+Your staff account has been created successfully.
 
 Login Email: {user.email}
-Password: {default_password}
+Temporary Password: {raw_password}
 
-Please log in and change your password.
+Please log in and update your password.
 
-Best Regards,
+Regards,
 Hotel Management System
 """,
             from_email=settings.DEFAULT_FROM_EMAIL,
@@ -211,38 +238,37 @@ Hotel Management System
     # -----------------------------------
     # UPDATE STAFF + USER + DOCUMENTS
     # -----------------------------------
+    @transaction.atomic
     def update(self, instance, validated_data):
         documents = validated_data.pop("documents", None)
-        user_slug = validated_data.pop("user_slug", None)
         hotel_slug = validated_data.pop("hotel_slug", None)
         role_slug = validated_data.pop("role_slug", None)
 
-        # Update USER Fields
         user = instance.user
 
-        if validated_data.get("full_name"):
+        # UPDATE USER FIELDS
+        if "full_name" in validated_data:
             user.full_name = validated_data.pop("full_name")
 
-        if validated_data.get("phone"):
+        if "phone" in validated_data:
             user.phone = validated_data.pop("phone")
 
-        if validated_data.get("email"):
+        if "email" in validated_data:
             new_email = validated_data.pop("email")
             if new_email != user.email:
                 user.email = new_email
                 user.is_email_verified = False
 
-        # Role update
+        # Update role
         if role_slug:
             try:
-                role = Role.objects.get(slug=role_slug)
-                user.role = role
+                user.role = Role.objects.get(slug=role_slug)
             except Role.DoesNotExist:
                 raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
         user.save()
 
-        # Hotel update
+        # Update hotel
         if hotel_slug:
             try:
                 instance.hotel = Hotel.objects.get(slug=hotel_slug)
@@ -262,6 +288,7 @@ Hotel Management System
                 StaffDocument.objects.create(staff=instance, **doc)
 
         return instance
+
 
 
 
