@@ -5,7 +5,7 @@ from django.contrib.auth import authenticate, logout, login
 from rest_framework.permissions import IsAuthenticated
 from MBP.permissions import HasModelPermission
 from MBP.models import Role, RoleModelPermission
-from accounts.serializers import UserSerializer, RegisterUserSerializer
+from accounts.serializers import UserSerializer, RegisterUserSerializer, VerifyEmailAndResetPasswordSerializer
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from MBP.utils import log_audit
@@ -174,32 +174,38 @@ class VerifyOTPView(APIView):
             status=status.HTTP_200_OK
         )
 
-class SetNewPasswordAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+class VerifyEmailAndResetPasswordAPIView(APIView):
+    permission_classes = [AllowAny]
 
-    def post(self, request):
-        user = request.user
+    def post(self, request, slug):
+        user = get_object_or_404(User, slug=slug)
 
-        if not user.must_change_password:
-            return Response({"error": "Password already set."}, status=400)
+        # optional safety check
+        if user.is_email_verified:
+            return Response(
+                {"detail": "Email already verified."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        old_password = request.data.get("old_password")
-        new_password = request.data.get("new_password")
+        serializer = VerifyEmailAndResetPasswordSerializer(
+            data=request.data
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=user)
 
-        if not user.check_password(old_password):
-            return Response({"error": "Old password incorrect."}, status=400)
+        return Response(
+            {"message": "Email verified and password reset successfully."},
+            status=status.HTTP_200_OK
+        )
 
-        user.set_password(new_password)
-        user.must_change_password = False
-        user.save()
-
-        return Response({"message": "Password updated successfully."}, status=200)
 
 
 
 class LoginView(APIView):
     permission_classes = []  # login is public
     throttle_classes = [UserRateThrottle]  # prevent brute force
+    
+    DEFAULT_PASSWORD = "Welcome@123"
 
     def post(self, request):
         email = request.data.get("email")
@@ -225,6 +231,16 @@ class LoginView(APIView):
             return Response(
                 {"error": "Invalid credentials"},
                 status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        if user.check_password(self.DEFAULT_PASSWORD):
+            return Response(
+                {
+                    "first_login": True,
+                    "message": "Please reset your password before continuing.",
+                    "email": user.email
+                },
+                status=status.HTTP_200_OK
             )
 
         # Step 3: Check email verification
