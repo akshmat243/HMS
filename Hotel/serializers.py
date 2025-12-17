@@ -2,6 +2,8 @@ from rest_framework import serializers
 from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination, Package
 from django.db.models import Min, Avg, Count
 from Restaurant.models import Restaurant
+from django.utils import timezone
+from django.db.models.functions import Coalesce
 
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -274,19 +276,46 @@ class BookingSerializer(serializers.ModelSerializer):
         return booking
 
     def update(self, instance, validated_data):
+        # 1. Guests data nikal lo
         guests_data = validated_data.pop('guests', None)
+        
+        # 2. Status change detect karo
+        new_status = validated_data.get('status')
+        old_status = instance.status
+
+        # --- NEW TIME LOGIC start ---
+        # Agar status "checked_in" ho raha hai, to abhi ka time set karo
+        if new_status == 'checked_in' and old_status != 'checked_in':
+            instance.check_in_time = timezone.now()
+            # Room ko occupied mark kar sakte hain
+            if instance.room:
+                instance.room.status = "occupied"
+                instance.room.save()
+
+        # Agar status "checked_out" ho raha hai, to abhi ka time set karo
+        if new_status == 'checked_out' and old_status != 'checked_out':
+            instance.check_out_time = timezone.now()
+            # Room ko free karo (Available)
+            if instance.room:
+                instance.room.status = "available"
+                instance.room.save()
+        # --- new TIME LOGIC END ---
+
+        # 3. Baaki fields update karo
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        
+
+        # 4. Room Status Logic
         if instance.status == 'cancelled' and instance.room:
             instance.room.status = "available"
             instance.room.save()
-        
+
         if instance.status == 'confirmed' and instance.room:
             instance.room.status = "reserved"
             instance.room.save()
 
+        # 5. Guests Update Logic 
         if guests_data is not None:
             instance.guests.all().delete()  # clear old guests
             for guest in guests_data:
@@ -568,3 +597,21 @@ class PackageSerializer(serializers.ModelSerializer):
             })
 
         return data
+    
+
+
+class ActivityLogSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    type = serializers.CharField()  # booking, payment, checkin, checkout, maintenance, order, system
+    title = serializers.CharField()
+    description = serializers.CharField()
+    timestamp = serializers.DateTimeField()
+    
+    # Dynamic styling fields 
+    status_color = serializers.CharField() # e.g., 'success', 'warning', 'info'
+    icon_text = serializers.CharField()    # e.g., 'Booking', 'Payment'
+    
+    # Staff / Actor Details
+    staff_name = serializers.CharField(allow_null=True)
+    staff_designation = serializers.CharField(allow_null=True)
+    staff_department = serializers.CharField(allow_null=True)
