@@ -71,15 +71,10 @@ class StaffDocumentSerializer(serializers.ModelSerializer):
 
 from django.db import transaction
 class StaffSerializer(serializers.ModelSerializer):
-    # ---------------------------
-    # Incoming slugs
-    # ---------------------------
+
     hotel_slug = serializers.SlugField(write_only=True, required=False)
     role_slug = serializers.SlugField(write_only=True, required=False)
 
-    # ---------------------------
-    # Read-only linked fields
-    # ---------------------------
     user = serializers.PrimaryKeyRelatedField(read_only=True)
     hotel = serializers.PrimaryKeyRelatedField(read_only=True)
 
@@ -87,16 +82,10 @@ class StaffSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)
 
-    # ---------------------------
-    # User fields (REQUIRED for create)
-    # ---------------------------
     full_name = serializers.CharField(write_only=True)
     email = serializers.EmailField(write_only=True)
     phone = serializers.CharField(write_only=True, required=False)
 
-    # ---------------------------
-    # Staff Documents (Nested)
-    # ---------------------------
     documents = serializers.ListField(
         child=serializers.DictField(),
         write_only=True,
@@ -130,9 +119,6 @@ class StaffSerializer(serializers.ModelSerializer):
             "documents_data", "created_at", "updated_at"
         ]
 
-    # -----------------------------------
-    # VALIDATION
-    # -----------------------------------
     def validate(self, data):
         if data.get("monthly_salary", 0) < 0:
             raise serializers.ValidationError({"monthly_salary": "Salary cannot be negative."})
@@ -145,18 +131,12 @@ class StaffSerializer(serializers.ModelSerializer):
 
         return data
 
-    # -----------------------------------
-    # CREATE USER + STAFF + DOCUMENTS
-    # -----------------------------------
     @transaction.atomic
     def create(self, validated_data):
         documents = validated_data.pop("documents", [])
         hotel_slug = validated_data.pop("hotel_slug", None)
         role_slug = validated_data.pop("role_slug", None)
 
-        # -------------------------
-        # CREATE USER
-        # -------------------------
         full_name = validated_data.pop("full_name")
         email = validated_data.pop("email")
         phone = validated_data.pop("phone", None)
@@ -185,9 +165,6 @@ class StaffSerializer(serializers.ModelSerializer):
 
         user.save()
 
-        # -------------------------
-        # Assign hotel
-        # -------------------------
         hotel = None
         if hotel_slug:
             try:
@@ -195,24 +172,17 @@ class StaffSerializer(serializers.ModelSerializer):
             except Hotel.DoesNotExist:
                 raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
 
-        # -------------------------
-        # CREATE STAFF
-        # -------------------------
+
         staff = Staff.objects.create(
             user=user,
             hotel=hotel,
             **validated_data
         )
 
-        # -------------------------
-        # CREATE DOCUMENTS
-        # -------------------------
+
         for doc in documents:
             StaffDocument.objects.create(staff=staff, **doc)
 
-        # -------------------------
-        # SEND LOGIN EMAIL
-        # -------------------------
         send_mail(
             subject="Your Staff Login Credentials",
             message=f"""
@@ -235,9 +205,6 @@ Hotel Management System
 
         return staff
 
-    # -----------------------------------
-    # UPDATE STAFF + USER + DOCUMENTS
-    # -----------------------------------
     @transaction.atomic
     def update(self, instance, validated_data):
         documents = validated_data.pop("documents", None)
