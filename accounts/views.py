@@ -174,6 +174,28 @@ class VerifyOTPView(APIView):
             status=status.HTTP_200_OK
         )
 
+class SetNewPasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        if not user.must_change_password:
+            return Response({"error": "Password already set."}, status=400)
+
+        old_password = request.data.get("old_password")
+        new_password = request.data.get("new_password")
+
+        if not user.check_password(old_password):
+            return Response({"error": "Old password incorrect."}, status=400)
+
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save()
+
+        return Response({"message": "Password updated successfully."}, status=200)
+
+
 
 class LoginView(APIView):
     permission_classes = []  # login is public
