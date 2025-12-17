@@ -6,6 +6,7 @@ from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from datetime import timedelta
+# from Marketing.models import Campaign
 # from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
@@ -271,12 +272,24 @@ class Booking(models.Model):
         ('paid', 'Paid'),
         ('partial', 'Partial'),
     ]
+    SOURCE_CHOICES = [
+        ('walk_in', 'Walk-In'),
+        ('website', 'Website'),
+        ('campaign', 'Campaign '), 
+        ('referral', 'Referral'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='bookings')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='bookings')
     booking_code = models.CharField(max_length=10, unique=True, blank=True)
+    booking_source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='website',help_text="Where did this booking come from?"
+    )
+
+    # Campaign Link taaki pata chale ki kaun se campaign ka ROI badhana hai
+    # campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True, related_name="bookings"
+    # )
     slug = models.SlugField(unique=True, blank=True)
     check_in = models.DateField()
     check_out = models.DateField()
