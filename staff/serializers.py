@@ -86,12 +86,17 @@ class StaffSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(write_only=True)
     phone = serializers.CharField(write_only=True, required=False)
 
-    documents = serializers.ListField(
-        child=serializers.DictField(),
+    documents = StaffDocumentSerializer(
+        many=True,
         write_only=True,
         required=False
     )
-    documents_data = serializers.SerializerMethodField(read_only=True)
+
+    documents_data = StaffDocumentSerializer(
+        source="documents",
+        many=True,
+        read_only=True
+    )
 
     def get_documents_data(self, obj):
         return StaffDocumentSerializer(obj.documents.all(), many=True).data
