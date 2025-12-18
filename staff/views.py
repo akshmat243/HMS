@@ -1,6 +1,6 @@
 from MBP.views import ProtectedModelViewSet
-from .models import Staff, Attendance, Payroll, Leave
-from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer, LeaveSerializer
+from .models import Staff, Attendance, Payroll, Leave, StaffDocument
+from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer, LeaveSerializer, StaffDocumentSerializer
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from datetime import time
@@ -9,6 +9,37 @@ from rest_framework import status
 from django.db.models import Count, Q, F, Avg, Sum
 from django.db import transaction
 
+class StaffDocumentViewSet(ProtectedModelViewSet):
+    queryset = StaffDocument.objects.select_related("staff", "staff__hotel", "staff__user").all()
+    serializer_class = StaffDocumentSerializer
+    lookup_field = "id"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+    
+        if user.is_superuser:
+                pass
+        
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
+            if not hasattr(user, "hotel") or not user.hotel:
+                return qs.none()
+
+            qs = qs.filter(staff__hotel=user.hotel)
+
+
+        elif hasattr(user, "staff_profile"):
+            qs = qs.filter(staff=user.staff_profile)
+
+        else:
+            return qs.none()
+
+        staff_slug = self.request.query_params.get("staff")
+        if staff_slug:
+            qs = qs.filter(staff__slug=staff_slug)
+
+        return qs
+        
 
 class StaffViewSet(ProtectedModelViewSet):
     """
