@@ -71,27 +71,31 @@ class StaffDocumentSerializer(serializers.ModelSerializer):
 from django.db import transaction
 from django.utils.crypto import get_random_string
 
+from django.db import transaction
+from django.utils.crypto import get_random_string
+from rest_framework import serializers
+
+
 class StaffSerializer(serializers.ModelSerializer):
 
+    # -------- incoming helpers --------
     hotel_slug = serializers.SlugField(write_only=True, required=False)
     role_slug = serializers.SlugField(write_only=True, required=False)
 
+    full_name = serializers.CharField(write_only=True)
+    email = serializers.EmailField(write_only=True)
+    phone = serializers.CharField(write_only=True, required=False)
+
+    # marker only (documents come from request.data)
+    documents = serializers.ListField(write_only=True, required=False)
+
+    # -------- outgoing --------
     user = serializers.PrimaryKeyRelatedField(read_only=True)
     hotel = serializers.PrimaryKeyRelatedField(read_only=True)
 
     user_full_name = serializers.CharField(source="user.full_name", read_only=True)
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)
-
-    full_name = serializers.CharField(write_only=True)
-    email = serializers.EmailField(write_only=True)
-    phone = serializers.CharField(write_only=True, required=False)
-
-    documents = StaffDocumentSerializer(
-        many=True,
-        write_only=True,
-        required=False
-    )
 
     documents_data = StaffDocumentSerializer(
         source="documents",
@@ -103,15 +107,20 @@ class StaffSerializer(serializers.ModelSerializer):
         model = Staff
         fields = [
             "id", "slug",
+
+            # relations
             "user", "hotel",
             "user_full_name", "user_email", "user_phone",
 
+            # user input
             "full_name", "email", "phone",
 
+            # staff fields
             "designation", "department", "joining_date",
             "status", "shift_start", "shift_end",
             "monthly_salary", "profile_image",
 
+            # helpers
             "hotel_slug", "role_slug",
             "documents", "documents_data",
 
@@ -130,7 +139,6 @@ class StaffSerializer(serializers.ModelSerializer):
 
         ss = data.get("shift_start")
         se = data.get("shift_end")
-
         if ss and se and ss == se:
             raise serializers.ValidationError(
                 {"shift_end": "Shift end cannot be equal to start."}
@@ -138,20 +146,27 @@ class StaffSerializer(serializers.ModelSerializer):
 
         return data
 
+    # -------------------------------------------------
+    # CREATE USER + STAFF + DOCUMENTS
+    # -------------------------------------------------
     @transaction.atomic
     def create(self, validated_data):
-        documents = validated_data.pop("documents", [])
+        request = self.context["request"]
+
+        # remove non-model helpers
+        validated_data.pop("documents", None)
         hotel_slug = validated_data.pop("hotel_slug", None)
         role_slug = validated_data.pop("role_slug", None)
 
+        # user fields
         full_name = validated_data.pop("full_name")
         email = validated_data.pop("email")
         phone = validated_data.pop("phone", None)
 
         if User.objects.filter(email=email).exists():
-            raise serializers.ValidationError(
-                {"email": "User with this email already exists."}
-            )
+            raise serializers.ValidationError({
+                "email": "User with this email already exists."
+            })
 
         raw_password = get_random_string(10)
 
@@ -165,7 +180,7 @@ class StaffSerializer(serializers.ModelSerializer):
         )
         user.set_password(raw_password)
 
-        # 👇 pass password to signal
+        # allow signal to send password
         user._raw_password = raw_password
 
         if role_slug:
@@ -183,16 +198,28 @@ class StaffSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
-        for doc in documents:
-            serializer = StaffDocumentSerializer(
-                data=doc,
-                context={"staff": staff}
+        # -------- create documents manually --------
+        index = 0
+        while True:
+            prefix = f"documents[{index}]"
+            if f"{prefix}[document_type]" not in request.data:
+                break
+
+            StaffDocument.objects.create(
+                staff=staff,
+                document_type=request.data.get(f"{prefix}[document_type]"),
+                document_number=request.data.get(f"{prefix}[document_number]"),
+                issued_date=request.data.get(f"{prefix}[issued_date]"),
+                expiry_date=request.data.get(f"{prefix}[expiry_date]"),
+                document_file=request.FILES.get(f"{prefix}[document_file]"),
             )
-            serializer.is_valid(raise_exception=True)
-            serializer.save(staff=staff)
+            index += 1
 
         return staff
 
+    # -------------------------------------------------
+    # UPDATE STAFF (NO DOCUMENT LOGIC HERE)
+    # -------------------------------------------------
     @transaction.atomic
     def update(self, instance, validated_data):
         documents = validated_data.pop("documents", None)
@@ -224,8 +251,7 @@ class StaffSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
-        instance.save()
-
+        
         if documents is not None:
             instance.documents.all().delete()
             for doc in documents:
@@ -236,6 +262,7 @@ class StaffSerializer(serializers.ModelSerializer):
                 serializer.is_valid(raise_exception=True)
                 serializer.save(staff=instance)
 
+        instance.save()
         return instance
 
 
