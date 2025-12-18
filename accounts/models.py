@@ -36,6 +36,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     is_email_verified = models.BooleanField(default=False)
     is_phone_verified = models.BooleanField(default=True)
+    
+    force_password_change = models.BooleanField(
+        default=False,
+        help_text="User must change password on first login or after admin reset."
+    )
 
     objects = UserManager()
 
