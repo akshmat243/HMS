@@ -154,6 +154,8 @@ class StaffSerializer(serializers.ModelSerializer):
             is_active=True
         )
         user.set_password(raw_password)
+        user.is_email_verified = False  
+        user.force_password_change = True
 
         # Assign role
         if role_slug:
