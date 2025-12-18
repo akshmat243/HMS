@@ -108,20 +108,40 @@ class UserSerializer(serializers.ModelSerializer):
         return instance
 
 class VerifyEmailAndResetPasswordSerializer(serializers.Serializer):
-    new_password = serializers.CharField(min_length=8)
-    confirm_password = serializers.CharField(min_length=8)
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    confirm_password = serializers.CharField(min_length=8, write_only=True)
 
     def validate(self, data):
+        user = self.context.get("user")
+
+        if not user:
+            raise serializers.ValidationError("User context is missing.")
+
+        # ✅ check old password
+        if not user.check_password(data["old_password"]):
+            raise serializers.ValidationError({
+                "old_password": "Old password is incorrect."
+            })
+
+        # ✅ check new vs confirm
         if data["new_password"] != data["confirm_password"]:
             raise serializers.ValidationError({
                 "confirm_password": "Passwords do not match."
             })
+
+        # ❌ prevent reusing same password
+        if user.check_password(data["new_password"]):
+            raise serializers.ValidationError({
+                "new_password": "New password cannot be same as old password."
+            })
+
         return data
 
     def save(self, user):
-        # set new password
         user.set_password(self.validated_data["new_password"])
         user.is_email_verified = True
-        user.force_password_change = False  # if you use this field
+        user.force_password_change = False
         user.save()
         return user
+
