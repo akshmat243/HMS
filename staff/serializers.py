@@ -7,7 +7,7 @@ from MBP.models import Role
 User = get_user_model()
 from django.core.mail import send_mail
 from django.conf import settings
-from datetime import datetime, timedelta
+from accounts.signals import user_created_with_password
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
@@ -187,6 +187,12 @@ class StaffSerializer(serializers.ModelSerializer):
             user.role = Role.objects.get(slug=role_slug)
 
         user.save()
+        
+        user_created_with_password.send(
+            sender=User,
+            user=user,
+            raw_password=raw_password
+        )
 
         hotel = None
         if hotel_slug:

@@ -243,7 +243,7 @@ class MessageViewSet(ProtectedModelViewSet):
         if save_template:
             try:
                 MessageTemplate.objects.create(
-                    name=(subject or "template") + "-" + timezone.now().strftime("%Y%m%d%H%M%S"),
+                    name=subject,
                     channel=channel,
                     subject=subject,
                     body=body,
