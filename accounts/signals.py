@@ -19,9 +19,10 @@ def send_verification_email_on_create(sender, instance, created, **kwargs):
 
     # Temporary password (set in serializer)
     raw_password = getattr(instance, "_raw_password", None)
+    print(raw_password)
 
     verification_link = (
-        f"http://127.0.0.1:8000/api/verify-email-reset-password/"
+        f"http://192.168.1.24:8000/api/verify-email-reset-password/"
         f"{instance.slug}/"
     )
 
