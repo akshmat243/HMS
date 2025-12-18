@@ -181,27 +181,32 @@ class StaffSerializer(serializers.ModelSerializer):
 
 
         for doc in documents:
-            StaffDocument.objects.create(staff=staff, **doc)
+            serializer = StaffDocumentSerializer(
+                data=doc,
+                context={"staff": staff}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save(staff=staff)
 
-        send_mail(
-            subject="Your Staff Login Credentials",
-            message=f"""
-Hello {user.full_name},
+#         send_mail(
+#             subject="Your Staff Login Credentials",
+#             message=f"""
+# Hello {user.full_name},
 
-Your staff account has been created successfully.
+# Your staff account has been created successfully.
 
-Login Email: {user.email}
-Temporary Password: {raw_password}
+# Login Email: {user.email}
+# Temporary Password: {raw_password}
 
-Please log in and update your password.
+# Please log in and update your password.
 
-Regards,
-Hotel Management System
-""",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
-        )
+# Regards,
+# Hotel Management System
+# """,
+#             from_email=settings.DEFAULT_FROM_EMAIL,
+#             recipient_list=[user.email],
+#             fail_silently=True,
+#         )
 
         return staff
 
