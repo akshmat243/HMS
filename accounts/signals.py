@@ -14,7 +14,7 @@ user_created_with_password = Signal()
 @receiver(user_created_with_password)
 def send_credentials_and_verification(sender, user, raw_password, **kwargs):
     verification_link = (
-        f"http://192.168.1.24:8000/api/verify-email-reset-password/{user.slug}/"
+        f"http://localhost:8080/verify-email-reset-password/{user.slug}/"
     )
 
     send_mail(
