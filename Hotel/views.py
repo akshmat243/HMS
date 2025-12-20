@@ -27,20 +27,38 @@ class HotelViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        qs = Hotel.objects.all()
 
-        # ✅ Superuser can see all hotels
+        # 1️⃣ Superuser → all hotels
         if user.is_superuser:
-            return Hotel.objects.all()
+            return qs
 
-        # ✅ Admins can see only their own hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return Hotel.objects.filter(owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
 
-        # ✅ Staff can see their hotel (if linked)
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
+        role_name = role.name.lower()
 
-        return Hotel.objects.none()
+        # 2️⃣ Admin → hotels owned by admin
+        if role_name == "admin":
+            return qs.filter(owner=user)
+
+        # 3️⃣ Vendor → hotels assigned to vendor
+        if role_name == "vendor":
+            return qs.filter(vendor=user)
+
+        # 4️⃣ Staff → only their hotel
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+                return qs.filter(id=user.staff_profile.hotel.id)
+            return qs.none()
+
+        # 5️⃣ Customer → ALL hotels (for booking)
+        if role_name == "customer":
+            return qs
+
+        return qs.none()
+
     
     @action(detail=False, methods=['get'], url_path='stats')
     def hotel_stats(self, request):
