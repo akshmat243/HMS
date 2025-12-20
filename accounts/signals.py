@@ -18,7 +18,7 @@ def send_credentials_and_verification(sender, user, raw_password, **kwargs):
     text_message = f"""
 Hello {user.full_name},
 
-Your staff account has been created.
+Your account has been created.
 
 Login Email: {user.email}
 Temporary Password: {raw_password}
@@ -62,7 +62,7 @@ Hotel Management System
   <div class="container">
     <p>Hello <strong>{user.full_name}</strong>,</p>
 
-    <p>Your staff account has been created.</p>
+    <p>Your account has been created.</p>
 
     <p>
       <strong>Login Email:</strong> {user.email}<br>
