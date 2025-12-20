@@ -6,6 +6,7 @@ from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from datetime import timedelta
+# from Marketing.models import Campaign
 # from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
@@ -271,16 +272,29 @@ class Booking(models.Model):
         ('paid', 'Paid'),
         ('partial', 'Partial'),
     ]
+    SOURCE_CHOICES = [
+        ('walk_in', 'Walk-In'),
+        ('website', 'Website'),
+        ('campaign', 'Campaign '), 
+        ('referral', 'Referral'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='bookings')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='bookings')
     booking_code = models.CharField(max_length=10, unique=True, blank=True)
+    booking_source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='website',help_text="Where did this booking come from?"
+    )
+
+    # Campaign Link taaki pata chale ki kaun se campaign ka ROI badhana hai
+    # campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True, related_name="bookings"
+    # )
     slug = models.SlugField(unique=True, blank=True)
     check_in = models.DateField()
     check_out = models.DateField()
     guests_count = models.PositiveIntegerField()
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS, default='unpaid')
     check_in_time = models.DateTimeField(null=True, blank=True)
@@ -301,6 +315,19 @@ class Booking(models.Model):
 
         if not self.slug:
             self.slug = slugify(self.booking_code)
+
+        if self.room and self.check_in and self.check_out:
+
+            total_nights = (self.check_out - self.check_in).days
+            
+            # Ensure nights > 0
+            if total_nights < 1:
+                total_nights = 1  
+
+            price = self.room.price_per_night or 0
+
+            self.total_amount = total_nights * price
+
 
         super().save(*args, **kwargs)
         if self.status == "checked_out" and self.room:

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import HotelReview, RestaurantReview, ServiceReview
+from .models import HotelReview, RestaurantReview, ServiceReview, StaffReview
 
 @admin.register(HotelReview)
 class HotelReviewAdmin(admin.ModelAdmin):
@@ -20,3 +20,9 @@ class ServiceReviewAdmin(admin.ModelAdmin):
     list_display = ('service_type', 'user', 'rating', 'date')
     list_filter = ('service_type', 'rating')
     search_fields = ('user__full_name', 'service_type')
+
+
+@admin.register(StaffReview)
+class StaffReviewAdmin(admin.ModelAdmin):
+    list_display = ( 'user', 'rating', 'date')
+    # search_fields = ('staff_memeber')
