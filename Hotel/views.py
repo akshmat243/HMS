@@ -31,14 +31,28 @@ class HotelViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        qs = Hotel.objects.all()
 
-        # ✅ Superuser can see all hotels
+        # 1️⃣ Superuser → all hotels
         if user.is_superuser:
-            return Hotel.objects.all()
+            return qs
 
-        # ✅ Admins can see only their own hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return Hotel.objects.filter(owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
+
+       # ✅ Staff
+        # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
+        #     return Hotel.objects.filter(staff__user=user)
+
+        # ✅ Vendor
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return Hotel.objects.filter(vendors__user=user)
+
+        # ✅ Customer
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return Hotel.objects.filter(status='available')
+
 
        # ✅ Staff
         # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
@@ -57,7 +71,6 @@ class HotelViewSet(ProtectedModelViewSet):
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
-        return Hotel.objects.none()
     
     @action(detail=False, methods=['get'], url_path='stats')
     def hotel_stats(self, request):
