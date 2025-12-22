@@ -837,15 +837,19 @@ class RoomViewSet(ProtectedModelViewSet):
             # ✅ Vendor → rooms of linked hotels
         if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
             return qs.filter(hotel__vendors__user=user)
-
-        # ✅ Customer → only available rooms of available hotels
         if hasattr(user, 'role') and user.role.name.lower() == 'customer':
-            return qs.filter(
-                hotel__status='available',
+            hotel_slug = self.request.query_params.get('hotel')
+
+            qs = qs.filter(
                 status='available',
-                is_available=True
+                is_available=True,
+                hotel__status='available'
             )
 
+            if hotel_slug:
+                qs = qs.filter(hotel__slug=hotel_slug)
+
+            return qs
         # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
