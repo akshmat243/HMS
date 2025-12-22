@@ -844,7 +844,7 @@ class RoomViewSet(ProtectedModelViewSet):
 
             qs = qs.filter(
                 status='available',
-                is_available=True,
+                # is_available=True,
                 hotel__status='available'
             )
 
@@ -1273,6 +1273,15 @@ class BookingViewSet(ProtectedModelViewSet):
         staff_profile = getattr(user, 'staff_profile', None)
         if staff_profile and getattr(staff_profile, 'hotel', None):
             return qs.filter(hotel=staff_profile.hotel)
+        
+        # ✅ Vendor → bookings of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own bookings
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
 
         # ❌ Others — no access
         return qs.none()
@@ -1385,6 +1394,14 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
         # Staff: only their assigned hotel
         if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
             return qs.filter(room__hotel=user.staff_profile.hotel)
+            # ✅ Vendor → requests of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(room__hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own service requests
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
         return qs.none()
 
     # List API (with optional filters for dashboard, e.g. status, date)
