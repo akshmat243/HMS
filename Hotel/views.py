@@ -793,7 +793,7 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
         
-            # ✅ Vendor: jis hotel se linked hai
+        # ✅ Vendor: jis hotel se linked hai
         if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
             return qs.filter(hotel__vendors__user=user)
 
@@ -833,6 +833,18 @@ class RoomViewSet(ProtectedModelViewSet):
         # Admin → rooms only from their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel=user.hotel)
+        
+            # ✅ Vendor → rooms of linked hotels
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer → only available rooms of available hotels
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return qs.filter(
+                hotel__status='available',
+                status='available',
+                is_available=True
+            )
 
         # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
@@ -853,6 +865,8 @@ class RoomViewSet(ProtectedModelViewSet):
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             serializer.save(hotel=user.hotel)
             return
+        
+        
 
         # Staff → forced to their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
