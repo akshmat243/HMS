@@ -1,6 +1,6 @@
 from MBP.views import ProtectedModelViewSet
 from .models import Staff, Attendance, Payroll, Leave, StaffDocument
-from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer, LeaveSerializer, StaffDocumentSerializer
+from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer, LeaveSerializer, StaffDocumentSerializer , StaffDashboardOverviewSerializer 
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from datetime import time
@@ -340,7 +340,7 @@ class StaffDashboardViewSet(ProtectedModelViewSet):
     Staff Dashboard Overview API
     """
     queryset = Staff.objects.select_related('user', 'hotel').all()
-    serializer_class = None   # ❗ serializer nahi chahiye (aggregation API)
+    serializer_class = StaffDashboardOverviewSerializer
     model_name = 'StaffDashboard'
     lookup_field = 'slug'
 

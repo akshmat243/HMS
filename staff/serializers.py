@@ -325,3 +325,31 @@ class LeaveSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"staff": "Staff profile not found."})
         validated_data['staff'] = staff
         return super().create(validated_data)
+
+
+
+
+
+
+
+
+
+
+
+
+class StaffUserSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    email = serializers.EmailField()
+
+
+class StaffDashboardCardsSerializer(serializers.Serializer):
+    assigned_tasks = serializers.IntegerField()
+    pending_work = serializers.IntegerField()
+    daily_activity = serializers.FloatField()
+    notifications = serializers.IntegerField()
+
+
+class StaffDashboardOverviewSerializer(serializers.Serializer):
+    user = StaffUserSerializer()
+    cards = StaffDashboardCardsSerializer()
+    recent_notifications = serializers.ListField(child=serializers.DictField())
