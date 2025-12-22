@@ -327,3 +327,103 @@ class LeaveViewSet(ProtectedModelViewSet):
         leave.approved_by = request.user
         leave.save(update_fields=['status', 'approved_by'])
         return Response({"message": "Leave rejected."})
+
+
+
+
+
+
+
+
+class StaffDashboardViewSet(ProtectedModelViewSet):
+    """
+    Staff Dashboard Overview API
+    """
+    queryset = Staff.objects.select_related('user', 'hotel').all()
+    serializer_class = None   # ❗ serializer nahi chahiye (aggregation API)
+    model_name = 'StaffDashboard'
+    lookup_field = 'slug'
+
+    @action(detail=False, methods=['get'], url_path='overview')
+    def overview(self, request):
+        user = request.user
+
+        # ==============================
+        # 🔐 SAME QUERYSET LOGIC (JAISA STAFFVIEWSET)
+        # ==============================
+        staffs = self.get_queryset()
+
+        if user.is_superuser:
+            pass
+
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
+            hotel = getattr(user, "hotel", None) or getattr(
+                getattr(user, "staff_profile", None), "hotel", None
+            )
+            if not hotel:
+                return Response(
+                    {"error": "Admin not linked to any hotel."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            staffs = staffs.filter(hotel=hotel)
+
+        elif hasattr(user, "staff_profile"):
+            staffs = staffs.filter(id=user.staff_profile.id)
+
+        else:
+            return Response(
+                {"error": "You are not authorized."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Optional staff filter (?staff=slug)
+        staff_slug = request.query_params.get("staff")
+        if staff_slug:
+            staffs = staffs.filter(slug=staff_slug)
+
+        staff = staffs.first()
+        if not staff:
+            return Response(
+                {"error": "Staff not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ==============================
+        # 📊 DASHBOARD CALCULATIONS
+        # ==============================
+
+        # 🔹 Assigned / Pending Tasks (future ready)
+        assigned_tasks = 0
+        pending_work = 0
+
+        # 🔹 Attendance → Daily Activity %
+        total_days = Attendance.objects.filter(staff=staff).count()
+        present_days = Attendance.objects.filter(
+            staff=staff,
+            status='present'
+        ).count()
+
+        daily_activity = round(
+            (present_days / total_days) * 100, 2
+        ) if total_days > 0 else 0
+
+        # 🔹 Notifications (future ready)
+        notifications_count = 0
+        recent_notifications = []
+
+        # ==============================
+        # 📦 RESPONSE (FRONTEND READY)
+        # ==============================
+        return Response({
+            "user": {
+                "name": staff.user.full_name,
+                "email": staff.user.email
+            },
+            "cards": {
+                "assigned_tasks": assigned_tasks,
+                "pending_work": pending_work,
+                "daily_activity": daily_activity,
+                "notifications": notifications_count
+            },
+            "recent_notifications": recent_notifications
+        }, status=status.HTTP_200_OK)
