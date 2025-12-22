@@ -41,27 +41,24 @@ class HotelViewSet(ProtectedModelViewSet):
         if not role:
             return qs.none()
 
-        role_name = role.name.lower()
+       # ✅ Staff
+        # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
+        #     return Hotel.objects.filter(staff__user=user)
 
-        # 2️⃣ Admin → hotels owned by admin
-        if role_name == "admin":
-            return qs.filter(owner=user)
+        # ✅ Vendor
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return Hotel.objects.filter(vendors__user=user)
 
-        # 3️⃣ Vendor → hotels assigned to vendor
-        if role_name == "vendor":
-            return qs.filter(vendor=user)
+        # ✅ Customer
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return Hotel.objects.filter(status='available')
 
-        # 4️⃣ Staff → only their hotel
-        if role_name == "staff":
-            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
-                return qs.filter(id=user.staff_profile.hotel.id)
-            return qs.none()
 
-        # 5️⃣ Customer → ALL hotels (for booking)
-        if role_name == "customer":
-            return qs
-
-        return qs.none()
+        # ✅ Staff can see their hotel (if linked)
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
+          
+        return Hotel.objects.none()
 
     
     @action(detail=False, methods=['get'], url_path='stats')
@@ -797,6 +794,14 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
 
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
+        
+            # ✅ Vendor: jis hotel se linked hai
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer: sirf available hotels ki categories
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return qs.filter(hotel__status='available')
 
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
