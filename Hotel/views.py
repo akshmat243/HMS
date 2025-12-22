@@ -969,19 +969,22 @@ class RoomViewSet(ProtectedModelViewSet):
     def dashboard_summary(self, request):
         """
         Dashboard summary:
-        - Superuser → can filter by ?hotel=<hotel_slug>
-        - Admin → only their assigned hotel
-        - Staff → only their assigned hotel
+        - Superuser → all rooms OR filter by ?hotel=<slug>
+        - Admin → their hotel
+        - Vendor → their hotel
+        - Staff → their hotel
+        - Customer → MUST pass ?hotel=<slug>
         """
 
         user = request.user
+        rooms = Room.objects.none()
+
+        hotel_slug = request.query_params.get("hotel")
 
         # -----------------------------------
-        # SUPERUSER → filter by hotel slug
+        # SUPERUSER → all or filtered
         # -----------------------------------
         if user.is_superuser:
-            hotel_slug = request.query_params.get('hotel')  # ⭐ filter by slug
-
             if hotel_slug:
                 try:
                     hotel = Hotel.objects.get(slug=hotel_slug)
@@ -995,25 +998,50 @@ class RoomViewSet(ProtectedModelViewSet):
                 rooms = Room.objects.all()
 
         # -----------------------------------
-        # ADMIN → rooms for their own hotel only
+        # ADMIN → own hotel
         # -----------------------------------
-        elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            if not hasattr(user, 'hotel') or user.hotel is None:
+        elif hasattr(user, "role") and user.role.name.lower() == "admin":
+            if not hasattr(user, "hotel") or not user.hotel:
                 return Response(
                     {"error": "Admin does not have a hotel assigned."},
                     status=status.HTTP_403_FORBIDDEN
                 )
-
             rooms = Room.objects.filter(hotel=user.hotel)
 
         # -----------------------------------
-        # STAFF → only rooms of their hotel
+        # VENDOR → vendor hotel
         # -----------------------------------
-        elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+        elif hasattr(user, "role") and user.role.name.lower() == "vendor":
+            rooms = Room.objects.filter(hotel__vendor=user)
+
+        # -----------------------------------
+        # STAFF → staff hotel
+        # -----------------------------------
+        elif hasattr(user, "staff_profile") and user.staff_profile.hotel:
             rooms = Room.objects.filter(hotel=user.staff_profile.hotel)
 
         # -----------------------------------
-        # Others → No access
+        # CUSTOMER → must pass hotel slug
+        # -----------------------------------
+        elif hasattr(user, "role") and user.role.name.lower() == "customer":
+            if not hotel_slug:
+                return Response(
+                    {"error": "Hotel slug is required for customer."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+            except Hotel.DoesNotExist:
+                return Response(
+                    {"error": "Invalid hotel slug."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            rooms = Room.objects.filter(hotel=hotel)
+
+        # -----------------------------------
+        # Others → no access
         # -----------------------------------
         else:
             return Response(
@@ -1024,14 +1052,14 @@ class RoomViewSet(ProtectedModelViewSet):
         # -----------------------------------
         # GROUP BY STATUS
         # -----------------------------------
-        status_counts = rooms.values('status').annotate(total=Count('id'))
-        data = {item['status']: item['total'] for item in status_counts}
+        status_counts = rooms.values("status").annotate(total=Count("id"))
+        data = {item["status"]: item["total"] for item in status_counts}
 
-        # Ensure all statuses appear even if zero
-        for status_key in ['available', 'occupied', 'reserved', 'maintenance']:
+        # Ensure all statuses exist
+        for status_key in ["available", "occupied", "reserved", "maintenance"]:
             data.setdefault(status_key, 0)
 
-        data['total_rooms'] = sum(data.values())
+        data["total_rooms"] = sum(data.values())
 
         return Response(data)
 
