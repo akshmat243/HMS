@@ -40,6 +40,19 @@ class HotelViewSet(ProtectedModelViewSet):
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return Hotel.objects.filter(owner=user)
 
+       # ✅ Staff
+        # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
+        #     return Hotel.objects.filter(staff__user=user)
+
+        # ✅ Vendor
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return Hotel.objects.filter(vendors__user=user)
+
+        # ✅ Customer
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return Hotel.objects.filter(status='available')
+
+
         # ✅ Staff can see their hotel (if linked)
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
@@ -779,6 +792,14 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
 
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
+        
+            # ✅ Vendor: jis hotel se linked hai
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer: sirf available hotels ki categories
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return qs.filter(hotel__status='available')
 
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
