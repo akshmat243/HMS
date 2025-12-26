@@ -1,12 +1,30 @@
 import uuid
 from django.db import models
 from django.utils.text import slugify
-from django.db import models, transaction
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from datetime import timedelta
+# from Marketing.models import Campaign
+# from maintenance.models import MaintenanceTask, MaintenanceCategory
 
 User = get_user_model()
+class Destination(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)  # e.g. "Goa", "Delhi"
+    slug = models.SlugField(unique=True, blank=True)
+    image = models.ImageField(upload_to='destinations/')  # Yaha upload hogi City ki photo
+    description = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True) 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
 
 class Hotel(models.Model):
     STATUS_CHOICES = [
@@ -25,6 +43,7 @@ class Hotel(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
+    amenities = models.TextField(help_text="Comma-separated list of amenities")
     address = models.TextField()
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=100)
@@ -116,6 +135,11 @@ class Room(models.Model):
         return f"{self.room_number} - {self.hotel.name}"
 
     def save(self, *args, **kwargs):
+
+        previous_status = None
+        if self.pk:
+            previous_status = Room.objects.filter(pk=self.pk).first().status
+
         with transaction.atomic():
             if not self.room_number and not self.pk:
                 count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
@@ -152,6 +176,71 @@ class Room(models.Model):
 
             super().save(*args, **kwargs)
 
+        
+         # 1) AVAILABLE → MAINTENANCE (auto-create task)
+        if previous_status != "maintenance" and self.status == "maintenance":
+            self.create_maintenance_task()
+
+        # 2) MAINTENANCE → AVAILABLE (auto-complete tasks)
+        if previous_status == "maintenance" and self.status == "available":
+            self.complete_maintenance_tasks()
+
+         # -----------------------------------------------------
+    # HELPER FUNCTION — CREATE MAINTENANCE TASK
+    # -----------------------------------------------------
+    def create_maintenance_task(self):
+        from maintenance.models import MaintenanceTask, MaintenanceCategory
+        # Prevent duplicate pending/in-progress tasks
+        exists = MaintenanceTask.objects.filter(
+            room=self,
+            status__in=["pending", "in_progress"]
+        ).exists()
+
+        if exists:
+            return  # Skip duplicates
+
+        # Find or create default category
+        category = MaintenanceCategory.objects.filter(hotel=self.hotel).first()
+        if not category:
+            category = MaintenanceCategory.objects.create(
+                hotel=self.hotel,
+                name="General Maintenance"
+            )
+
+        # Find created_by → hotel owner or admin
+        created_by = None
+        if hasattr(self.hotel, "owner") and self.hotel.owner:
+            created_by = self.hotel.owner
+        else:
+            created_by = User.objects.filter(hotel=self.hotel, role__name="Admin").first()
+
+        # Create the maintenance task
+        MaintenanceTask.objects.create(
+            hotel=self.hotel,
+            category=category,
+            location_type="room",
+            room=self,
+            title=f"Room {self.room_number} Under Maintenance",
+            description=f"Auto-created because room {self.room_number} was set to maintenance.",
+            priority="high",
+            status="pending",
+            created_by=created_by
+        )
+    def complete_maintenance_tasks(self):
+        from maintenance.models import MaintenanceTask
+        # Find all active tasks for this room
+        tasks = MaintenanceTask.objects.filter(
+            room=self,
+            status__in=["pending", "in_progress"]
+        )
+
+        if not tasks.exists():
+            return
+
+        # Mark all as completed
+        for task in tasks:
+            task.status = "completed"
+            task.save()   
 
 class RoomMedia(models.Model):
     ROOM_MEDIA_TYPE = [
@@ -183,16 +272,29 @@ class Booking(models.Model):
         ('paid', 'Paid'),
         ('partial', 'Partial'),
     ]
+    SOURCE_CHOICES = [
+        ('walk_in', 'Walk-In'),
+        ('website', 'Website'),
+        ('campaign', 'Campaign '), 
+        ('referral', 'Referral'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='bookings')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='bookings')
     booking_code = models.CharField(max_length=10, unique=True, blank=True)
+    booking_source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='website',help_text="Where did this booking come from?"
+    )
+
+    # Campaign Link taaki pata chale ki kaun se campaign ka ROI badhana hai
+    # campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True, related_name="bookings"
+    # )
     slug = models.SlugField(unique=True, blank=True)
     check_in = models.DateField()
     check_out = models.DateField()
     guests_count = models.PositiveIntegerField()
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS, default='unpaid')
     check_in_time = models.DateTimeField(null=True, blank=True)
@@ -214,11 +316,27 @@ class Booking(models.Model):
         if not self.slug:
             self.slug = slugify(self.booking_code)
 
+        if self.room and self.check_in and self.check_out:
+
+            total_nights = (self.check_out - self.check_in).days
+            
+            # Ensure nights > 0
+            if total_nights < 1:
+                total_nights = 1  
+
+            price = self.room.price_per_night or 0
+
+            self.total_amount = total_nights * price
+
+
         super().save(*args, **kwargs)
         if self.status == "checked_out" and self.room:
             self.room.status = "available"
             self.room.save()
 
+    @property
+    def total_nights(self):
+        return (self.check_out - self.check_in).days
         
         
 class Guest(models.Model):
@@ -241,6 +359,8 @@ class Guest(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
     id_proof_type = models.CharField(max_length=50, blank=True, null=True)
     id_proof_number = models.CharField(max_length=50, blank=True, null=True)
+    id_proof_file = models.FileField(upload_to="guest_docs/", null=True, blank=True)
+    
     special_request = models.TextField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -457,3 +577,113 @@ class RoomServiceStage(models.Model):
 
     def __str__(self):
         return f"{self.service.service_code} - {self.stage}"
+    
+
+
+class MobileAppConfig(models.Model):
+    # Singleton pattern: Hum ensure karenge ki sirf ek hi active row ho
+    android_apk = models.FileField(upload_to='apps/android/', blank=True, null=True)
+    ios_app_url = models.FileField(upload_to='apps/ios/', blank=True, null=True)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Mobile App Configuration"
+
+    class Meta:
+        verbose_name = "App Settings"
+
+from django.core.validators import MinValueValidator
+from django.db import models
+from django.core.validators import MinValueValidator
+from django.utils.text import slugify
+from django.contrib.auth import get_user_model
+import uuid
+
+User = get_user_model()
+
+class Package(models.Model):
+    # --- CHOICES ---
+    PACKAGE_TYPE_CHOICES = [
+        ('international', 'International'),
+        ('domestic', 'Domestic'),
+    ]
+
+    CATEGORY_CHOICES = [
+        ('destination', 'Top Destination'), # Left Side Cards (e.g. Maldives)
+        ('theme', 'Theme'),    # Right Side List (e.g. Honeymoon)
+    ]
+    
+    UNIT_CHOICES = [
+        ('per_person', 'Per Person'),    # 1 Person cost
+        ('per_couple', 'Per Couple'),    # 2 Person cost
+        ('fixed', 'Fixed Price'),        # Family/Group cost
+    ]
+
+    # --- FIELDS ---
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    owner = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='packages',
+        limit_choices_to={'role__name': 'Admin'},
+        help_text="The admin created this package"
+    )
+
+    name = models.CharField(max_length=150) # e.g. "Magical Maldives"
+    slug = models.SlugField(unique=True, blank=True)
+
+    # UI Logic: Card vs List
+    category = models.CharField(
+        max_length=20, 
+        choices=CATEGORY_CHOICES, 
+        default='destination',
+        help_text="Select 'Top Destination' for main cards, 'Theme' for side list"
+    )
+    
+    # Locations String
+    locations = models.CharField(max_length=255, help_text="e.g. Dubai | Kashmir | Kerala")
+
+    # Search Logic: "From" City
+    departure_city = models.CharField(max_length=100, default="Delhi", help_text="Trip starts from?")
+    
+    # Search Logic: Duration
+    duration_days = models.IntegerField(default=3, help_text="How many days is the trip?")
+    
+    # --- PRICING LOGIC  ---
+    price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    price_unit = models.CharField(
+        max_length=20, 
+        choices=UNIT_CHOICES, 
+        default='per_person',
+        help_text="Is this price for 1 person or a couple?"
+    )
+
+    members_included = models.IntegerField(
+        default=1, 
+        help_text="1 for Per Person, 2 for Couple, 4 for Family Fixed"
+    )
+
+    # Optional: Agar limited seats hain (Search filter ke liye)
+    total_seats = models.PositiveIntegerField(null=True, blank=True, help_text="Leave blank if unlimited seats")
+
+    # --- META & INFO ---
+    cover_image = models.ImageField(upload_to='packages/covers/')
+    package_type = models.CharField(max_length=20, choices=PACKAGE_TYPE_CHOICES, default='domestic')
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            if Package.objects.filter(slug=base_slug).exists():
+                self.slug = f"{base_slug}-{str(uuid.uuid4())[:4]}"
+            else:
+                self.slug = base_slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} - ₹{self.price}/{self.price_unit}"

@@ -4,13 +4,21 @@ from .views import (
     HotelReviewViewSet,
     RestaurantReviewViewSet,
     ServiceReviewViewSet,
+    StaffReviewViewSet
+    # PublicReviewViewSet,
+    # ReviewDashboardStatsView,
+    # RatingBreakdownView
 )
 
 router = DefaultRouter()
-router.register(r'hotel-reviews', HotelReviewViewSet)
-router.register(r'restaurant-reviews', RestaurantReviewViewSet)
-router.register(r'service-reviews', ServiceReviewViewSet)
+router.register(r'hotel-reviews', HotelReviewViewSet, basename='hotel-reviews')
+router.register(r'restaurant-reviews', RestaurantReviewViewSet, basename='restaurant-reviews')
+router.register(r'service-reviews', ServiceReviewViewSet, basename="service-reviews")
+router.register(r'staff-reviews', StaffReviewViewSet, basename='staff-review')
+# router.register(r'public-reviews', PublicReviewViewSet, basename='public-reviews')
 
 urlpatterns = [
     path('api/', include(router.urls)),
+#     path('api/review-dashboard/', ReviewDashboardStatsView.as_view(), name='review-stats'),
+#     path('api/rating-breakdown/', RatingBreakdownView.as_view(), name='rating-breakdown'),
 ]

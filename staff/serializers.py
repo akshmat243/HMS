@@ -1,12 +1,13 @@
 from rest_framework import serializers
-from .models import Staff, Attendance, Payroll, Leave
+from .models import Staff, Attendance, Payroll, Leave, StaffDocument
 from datetime import time
 from django.contrib.auth import get_user_model
 from Hotel.models import Hotel
+from MBP.models import Role
 User = get_user_model()
 from django.core.mail import send_mail
 from django.conf import settings
-from datetime import datetime, timedelta
+from accounts.signals import user_created_with_password
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
@@ -38,141 +39,239 @@ class AttendanceSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class StaffSerializer(serializers.ModelSerializer):
-    # ✅ Slug inputs
-    user_slug = serializers.SlugField(write_only=True, required=True)
-    hotel_slug = serializers.SlugField(write_only=True, required=False, allow_null=True)
+class StaffDocumentSerializer(serializers.ModelSerializer):
+    document_type_display = serializers.CharField(
+        source="get_document_type_display", read_only=True
+    )
+    document_file_url = serializers.SerializerMethodField()
 
-    # ✅ Read-only related fields
+    class Meta:
+        model = StaffDocument
+        fields = [
+            "id", "document_type", "document_type_display",
+            "document_number", "document_file", "document_file_url",
+            "issued_date", "expiry_date", "created_at"
+        ]
+
+    def get_document_file_url(self, obj):
+        if obj.document_file:
+            return obj.document_file.url
+        return None
+
+    def validate(self, data):
+        # prevent duplicate document type for a staff
+        staff = self.context.get("staff")
+        doc_type = data.get("document_type")
+
+        if staff and StaffDocument.objects.filter(staff=staff, document_type=doc_type).exists():
+            raise serializers.ValidationError(
+                {"document_type": "This document type is already uploaded for this staff."}
+            )
+        return data
+from django.db import transaction
+from django.utils.crypto import get_random_string
+
+from django.db import transaction
+from django.utils.crypto import get_random_string
+from rest_framework import serializers
+
+
+class StaffSerializer(serializers.ModelSerializer):
+
+    # -------- incoming helpers --------
+    hotel_slug = serializers.SlugField(write_only=True, required=False)
+    role_slug = serializers.SlugField(write_only=True, required=False)
+
+    full_name = serializers.CharField(write_only=True)
+    email = serializers.EmailField(write_only=True)
+    phone = serializers.CharField(write_only=True, required=False)
+
+    # marker only (documents come from request.data)
+    documents = serializers.ListField(write_only=True, required=False)
+
+    # -------- outgoing --------
     user = serializers.PrimaryKeyRelatedField(read_only=True)
     hotel = serializers.PrimaryKeyRelatedField(read_only=True)
-    user_full_name = serializers.CharField(source='user.full_name', read_only=True)
-    user_email = serializers.EmailField(source='user.email', read_only=True)
-    user_phone = serializers.CharField(source='user.phone', read_only=True)
-    performance_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
-    attendance_records = AttendanceSerializer(many=True, read_only=True)
-    profile_image = serializers.ImageField(required=False, allow_null=True)
 
-    # ✅ Add writable user fields for update
-    full_name = serializers.CharField(write_only=True, required=False)
-    email = serializers.EmailField(write_only=True, required=False)
-    phone = serializers.CharField(write_only=True, required=False)
+    user_full_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_phone = serializers.CharField(source="user.phone", read_only=True)
+
+    documents_data = StaffDocumentSerializer(
+        source="documents",
+        many=True,
+        read_only=True
+    )
 
     class Meta:
         model = Staff
         fields = [
-            'id', 'slug', 'user_slug', 'hotel_slug', 'user', 'hotel',
-            'user_full_name', 'user_email', 'user_phone',
-            'full_name', 'email', 'phone',
-            'designation', 'department', 'joining_date',
-            'performance_score', 'status', 'shift_start', 'shift_end',
-            'monthly_salary', 'profile_image', 'attendance_records',
-            'created_at', 'updated_at'
+            "id", "slug",
+
+            # relations
+            "user", "hotel",
+            "user_full_name", "user_email", "user_phone",
+
+            # user input
+            "full_name", "email", "phone",
+
+            # staff fields
+            "designation", "department", "joining_date",
+            "status", "shift_start", "shift_end",
+            "monthly_salary", "profile_image",
+
+            # helpers
+            "hotel_slug", "role_slug",
+            "documents", "documents_data",
+
+            "created_at", "updated_at",
         ]
         read_only_fields = [
-            'slug', 'created_at', 'updated_at', 'performance_score',
-            'user', 'hotel'
+            "id", "slug", "user", "hotel",
+            "documents_data", "created_at", "updated_at"
         ]
 
     def validate(self, data):
-        shift_start = data.get('shift_start')
-        shift_end = data.get('shift_end')
-        salary = data.get('monthly_salary', 0)
-        if shift_start and shift_end:
-            # ✅ Allow overnight shifts (e.g., 20:00 to 06:00)
-            if shift_start == shift_end:
-                raise serializers.ValidationError({"shift_end": "Shift end time cannot be the same as shift start time."})
-            
-            # For clarity, we can normalize the times to a datetime object
-            today = datetime.today()
-            start_dt = datetime.combine(today, shift_start)
-            end_dt = datetime.combine(today, shift_end)
-
-            # ✅ If end time is earlier than start, assume it’s the next day (overnight)
-            if end_dt <= start_dt:
-                end_dt += timedelta(days=1)
-                
-        if salary < 0:
-            raise serializers.ValidationError({"monthly_salary": "Monthly salary cannot be negative."})
-        return data
-
-    def create(self, validated_data):
-        user_slug = validated_data.pop('user_slug', None)
-        hotel_slug = validated_data.pop('hotel_slug', None)
-
-        try:
-            user = User.objects.get(slug=user_slug)
-        except User.DoesNotExist:
-            user = User.objects.create(
-                slug=user_slug,
-                username=user_slug,
-                role='staff',
+        if data.get("monthly_salary", 0) < 0:
+            raise serializers.ValidationError(
+                {"monthly_salary": "Salary cannot be negative."}
             )
 
-        if not user.role or str(user.role).lower() != 'staff':
-            raise serializers.ValidationError({"user_slug": "User does not have 'staff' role."})
+        ss = data.get("shift_start")
+        se = data.get("shift_end")
+        if ss and se and ss == se:
+            raise serializers.ValidationError(
+                {"shift_end": "Shift end cannot be equal to start."}
+            )
+
+        return data
+
+    # -------------------------------------------------
+    # CREATE USER + STAFF + DOCUMENTS
+    # -------------------------------------------------
+    @transaction.atomic
+    def create(self, validated_data):
+        request = self.context["request"]
+
+        # remove non-model helpers
+        validated_data.pop("documents", None)
+        hotel_slug = validated_data.pop("hotel_slug", None)
+        role_slug = validated_data.pop("role_slug", None)
+
+        # user fields
+        full_name = validated_data.pop("full_name")
+        email = validated_data.pop("email")
+        phone = validated_data.pop("phone", None)
+
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({
+                "email": "User with this email already exists."
+            })
+
+        raw_password = get_random_string(10)
+
+        user = User.objects.create(
+            full_name=full_name,
+            email=email,
+            phone=phone,
+            is_active=True,
+            is_email_verified=False,
+            force_password_change=True
+        )
+        user.set_password(raw_password)
+
+        # allow signal to send password
+        user._raw_password = raw_password
+
+        if role_slug:
+            user.role = Role.objects.get(slug=role_slug)
+
+        user.save()
+        
+        user_created_with_password.send(
+            sender=User,
+            user=user,
+            raw_password=raw_password
+        )
 
         hotel = None
         if hotel_slug:
-            try:
-                hotel = Hotel.objects.get(slug=hotel_slug)
-            except Hotel.DoesNotExist:
-                raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
+            hotel = Hotel.objects.get(slug=hotel_slug)
 
-        staff = Staff.objects.create(user=user, hotel=hotel, **validated_data)
+        staff = Staff.objects.create(
+            user=user,
+            hotel=hotel,
+            **validated_data
+        )
+
+        # -------- create documents manually --------
+        index = 0
+        while True:
+            prefix = f"documents[{index}]"
+            if f"{prefix}[document_type]" not in request.data:
+                break
+
+            StaffDocument.objects.create(
+                staff=staff,
+                document_type=request.data.get(f"{prefix}[document_type]"),
+                document_number=request.data.get(f"{prefix}[document_number]"),
+                issued_date=request.data.get(f"{prefix}[issued_date]"),
+                expiry_date=request.data.get(f"{prefix}[expiry_date]"),
+                document_file=request.FILES.get(f"{prefix}[document_file]"),
+            )
+            index += 1
+
         return staff
 
+    # -------------------------------------------------
+    # UPDATE STAFF (NO DOCUMENT LOGIC HERE)
+    # -------------------------------------------------
+    @transaction.atomic
     def update(self, instance, validated_data):
-        user_slug = validated_data.pop('user_slug', None)
-        hotel_slug = validated_data.pop('hotel_slug', None)
+        documents = validated_data.pop("documents", None)
+        hotel_slug = validated_data.pop("hotel_slug", None)
+        role_slug = validated_data.pop("role_slug", None)
 
-        # Extract possible user fields
-        full_name = validated_data.pop('full_name', None)
-        email = validated_data.pop('email', None)
-        phone = validated_data.pop('phone', None)
-
-        # Get or update related user
         user = instance.user
-        if user_slug:
-            try:
-                user = User.objects.get(slug=user_slug)
-            except User.DoesNotExist:
-                raise serializers.ValidationError({"user_slug": "Invalid user slug."})
 
-        email_changed = False
-        if full_name:
-            user.full_name = full_name
-        if phone:
-            user.phone = phone
-        if email and email != user.email:
-            email_changed = True
-            user.email = email
-            if hasattr(user, 'is_email_verified'):
+        if "full_name" in validated_data:
+            user.full_name = validated_data.pop("full_name")
+
+        if "phone" in validated_data:
+            user.phone = validated_data.pop("phone")
+
+        if "email" in validated_data:
+            new_email = validated_data.pop("email")
+            if new_email != user.email:
+                user.email = new_email
                 user.is_email_verified = False
+
+        if role_slug:
+            user.role = Role.objects.get(slug=role_slug)
 
         user.save()
 
-        # ✅ Send verification email if email changed
-        if email_changed:
-            send_mail(
-                subject="Verify Your Email",
-                message=f"Hi {user.full_name},\n\nPlease verify your new email address.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=True,
-            )
-
         if hotel_slug:
-            try:
-                instance.hotel = Hotel.objects.get(slug=hotel_slug)
-            except Hotel.DoesNotExist:
-                raise serializers.ValidationError({"hotel_slug": "Invalid hotel slug."})
+            instance.hotel = Hotel.objects.get(slug=hotel_slug)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
+        
+        if documents is not None:
+            instance.documents.all().delete()
+            for doc in documents:
+                serializer = StaffDocumentSerializer(
+                    data=doc,
+                    context={"staff": instance}
+                )
+                serializer.is_valid(raise_exception=True)
+                serializer.save(staff=instance)
+
         instance.save()
         return instance
+
+
 
 
 class PayrollSerializer(serializers.ModelSerializer):
@@ -226,3 +325,31 @@ class LeaveSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"staff": "Staff profile not found."})
         validated_data['staff'] = staff
         return super().create(validated_data)
+
+
+
+
+
+
+
+
+
+
+
+
+class StaffUserSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    email = serializers.EmailField()
+
+
+class StaffDashboardCardsSerializer(serializers.Serializer):
+    assigned_tasks = serializers.IntegerField()
+    pending_work = serializers.IntegerField()
+    daily_activity = serializers.FloatField()
+    notifications = serializers.IntegerField()
+
+
+class StaffDashboardOverviewSerializer(serializers.Serializer):
+    user = StaffUserSerializer()
+    cards = StaffDashboardCardsSerializer()
+    recent_notifications = serializers.ListField(child=serializers.DictField())

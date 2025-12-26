@@ -5,7 +5,7 @@ from django.contrib.auth import authenticate, logout, login
 from rest_framework.permissions import IsAuthenticated
 from MBP.permissions import HasModelPermission
 from MBP.models import Role, RoleModelPermission
-from accounts.serializers import UserSerializer, RegisterUserSerializer
+from accounts.serializers import UserSerializer, RegisterUserSerializer, VerifyEmailAndResetPasswordSerializer
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from MBP.utils import log_audit
@@ -174,10 +174,33 @@ class VerifyOTPView(APIView):
             status=status.HTTP_200_OK
         )
 
+class VerifyEmailAndResetPasswordAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, slug):
+        user = get_object_or_404(User, slug=slug)
+
+        serializer = VerifyEmailAndResetPasswordSerializer(
+            data=request.data,
+            context={"user": user}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=user)
+
+        return Response(
+            {"message": "Email verified and password reset successfully."},
+            status=status.HTTP_200_OK
+        )
+
+
+
+
 
 class LoginView(APIView):
     permission_classes = []  # login is public
     throttle_classes = [UserRateThrottle]  # prevent brute force
+    
+    DEFAULT_PASSWORD = "Welcome@123"
 
     def post(self, request):
         email = request.data.get("email")
@@ -203,6 +226,16 @@ class LoginView(APIView):
             return Response(
                 {"error": "Invalid credentials"},
                 status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        if user.check_password(self.DEFAULT_PASSWORD):
+            return Response(
+                {
+                    "first_login": True,
+                    "message": "Please reset your password before continuing.",
+                    "email": user.email
+                },
+                status=status.HTTP_200_OK
             )
 
         # Step 3: Check email verification

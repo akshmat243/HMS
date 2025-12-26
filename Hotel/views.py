@@ -2,21 +2,25 @@ from MBP.views import ProtectedModelViewSet
 from datetime import date, datetime
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Count, Q, F, Avg, Sum
+from django.db.models import Count, Q, F, Avg, Sum, Count, Min, Prefetch, Max
 from django.utils import timezone
+from datetime import timedelta
 from rest_framework import status
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, RoomMedia, Destination, MobileAppConfig, Package
 from django.core.exceptions import PermissionDenied
 from django.utils.text import slugify
-from .serializers import (
-    HotelSerializer,
-    RoomCategorySerializer,
-    RoomSerializer,
-    BookingSerializer,
-    RoomServiceRequestSerializer,
-    RoomCreateUpdateSerializer,
-    RoomMediaSerializer
-)
+from .serializers import *
+from rest_framework.permissions import AllowAny
+from django.db.models.functions import Trim, Lower
+from Restaurant.models import Restaurant
+import random
+from rest_framework.views import APIView
+import os
+from django.http import FileResponse, Http404
+from Restaurant.models import RestaurantOrder
+from maintenance.models import MaintenanceTask
+from django.utils.timesince import timesince
+from staff.models import Staff
 
 
 class HotelViewSet(ProtectedModelViewSet):
@@ -27,20 +31,35 @@ class HotelViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        qs = Hotel.objects.all()
 
-        # ✅ Superuser can see all hotels
+        # 1️⃣ Superuser → all hotels
         if user.is_superuser:
-            return Hotel.objects.all()
+            return qs
 
-        # ✅ Admins can see only their own hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return Hotel.objects.filter(owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
+
+       # ✅ Staff
+        # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
+        #     return Hotel.objects.filter(staff__user=user)
+
+        # ✅ Vendor
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return Hotel.objects.filter(vendors__user=user)
+
+        # ✅ Customer
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return Hotel.objects.filter(status='available')
+
 
         # ✅ Staff can see their hotel (if linked)
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
-
+          
         return Hotel.objects.none()
+
     
     @action(detail=False, methods=['get'], url_path='stats')
     def hotel_stats(self, request):
@@ -81,6 +100,684 @@ class HotelViewSet(ProtectedModelViewSet):
 
         serializer.save(slug=slug)
 
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='search')
+    def search(self, request):
+        """
+        Public API to search hotels without login.
+        Query Params:
+        - location (string): City, State, or Hotel Name
+        - check_in (YYYY-MM-DD)
+        - check_out (YYYY-MM-DD)
+        - guests (int): Total number of guests
+        - rooms (int): Number of rooms required
+        """
+        location = request.query_params.get('location', '').strip()
+        check_in = request.query_params.get('check_in')
+        check_out = request.query_params.get('check_out')
+        guests = int(request.query_params.get('guests', 1))
+        rooms_required = int(request.query_params.get('rooms', 1))
+
+        # 1. Start with all hotels (or active ones)
+        queryset = Hotel.objects.filter(status='available')
+
+        # 2. Filter by Location (City, State, or Name)
+        if location:
+            queryset = queryset.filter(
+                Q(city__icontains=location) | 
+                Q(state__icontains=location) | 
+                Q(name__icontains=location) |
+                Q(address__icontains=location)
+            )
+
+        # 3. Filter by Date Availability (The logic part)
+        if check_in and check_out:
+            try:
+                check_in_date = datetime.strptime(check_in, "%Y-%m-%d").date()
+                check_out_date = datetime.strptime(check_out, "%Y-%m-%d").date()
+            except ValueError:
+                return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+            # Find rooms that are booked during these dates
+            booked_rooms_ids = Booking.objects.filter(
+                status__in=['confirmed', 'checked_in', 'pending'], # Exclude cancelled/checked_out
+                room__isnull=False
+            ).filter(
+                # Check for date overlap
+                Q(check_in__lt=check_out_date) & Q(check_out__gt=check_in_date)
+            ).values_list('room_id', flat=True)
+
+            # Find Available Rooms that match Guest Capacity
+            # We assume guests are distributed evenly, e.g., 4 guests in 2 rooms = 2 per room.
+            guests_per_room = guests / rooms_required 
+
+            available_rooms = Room.objects.filter(
+                status='available',
+                is_available=True
+            ).exclude(
+                id__in=booked_rooms_ids
+            ).filter(
+                # Ensure room category can hold the guests
+                room_category__max_occupancy__gte=guests_per_room
+            )
+
+            # 4. Filter Hotels that have enough available rooms
+            # We annotate the hotel queryset with the count of valid available rooms
+            queryset = queryset.prefetch_related(
+                Prefetch('rooms', queryset=available_rooms, to_attr='available_room_list')
+            ).annotate(
+                available_rooms_count=Count(
+                    'rooms', 
+                    filter=Q(rooms__in=available_rooms),
+                    distinct=True
+                )
+            ).filter(available_rooms_count__gte=rooms_required)
+
+        # Use the specific Public Serializer
+        from .serializers import HotelSearchSerializer
+        serializer = HotelSearchSerializer(queryset, many=True, context={'request': request})
+        
+        return Response({
+            "count": queryset.count(),
+            "results": serializer.data,
+            "params": {
+                "location": location,
+                "dates": f"{check_in} to {check_out}" if check_in else "Any dates",
+                "guests": guests
+            }
+        })
+    
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='top-destinations')
+    def top_destinations(self, request):
+        """
+        Returns Destinations with:
+        1. City-wise Counts (Hotels & Restaurants in that City)
+        2. State-wise Counts (Hotels & Restaurants in that State)
+        3. Rating, State Name, Country Name
+        """
+        all_destinations = Destination.objects.all()
+
+        
+        # CITY-WISE DATA
+        
+        
+        # 1. Hotels grouped by City
+        city_hotel_stats = (
+            Hotel.objects.filter(status='available')
+            .annotate(clean_city=Lower(Trim('city')))
+            .values('clean_city')
+            .annotate(
+                total=Count('id'),
+                avg_rating=Avg('reviews__rating'),
+                state_name=Max('state'),   # Fetch State name to link with State counts
+                country_name=Max('country')
+            )
+        )
+        
+        # Map: {'jaipur': {'total': 5, 'state': 'Rajasthan', ...}}
+        city_hotel_map = {
+            item['clean_city']: {
+                'count': item['total'],
+                'rating': round(item['avg_rating'], 1) if item['avg_rating'] else 4.5,
+                'state': item['state_name'],
+                'country': item['country_name']
+            }
+            for item in city_hotel_stats if item['clean_city']
+        }
+
+        # Restaurants grouped by City
+        city_resto_stats = (
+            Restaurant.objects.filter(status='open')
+            .annotate(clean_city=Lower(Trim('city')))
+            .values('clean_city')
+            .annotate(total=Count('id'))
+        )
+        city_resto_map = {
+            item['clean_city']: item['total']
+            for item in city_resto_stats if item['clean_city']
+        }
+
+        # STATE-WISE DATA 
+
+        # Hotels grouped by State 
+        state_hotel_stats = (
+            Hotel.objects.filter(status='available')
+            .annotate(clean_state=Lower(Trim('state')))
+            .values('clean_state')
+            .annotate(total=Count('id'))
+        )
+        # Map: {'rajasthan': 50, 'delhi': 20}
+        state_hotel_map = {
+            item['clean_state']: item['total']
+            for item in state_hotel_stats if item['clean_state']
+        }
+
+        #  Restaurants grouped by State
+        state_resto_stats = (
+            Restaurant.objects.filter(status='open')
+            .annotate(clean_state=Lower(Trim('state')))
+            .values('clean_state')
+            .annotate(total=Count('id'))
+        )
+        state_resto_map = {
+            item['clean_state']: item['total']
+            for item in state_resto_stats if item['clean_state']
+        }
+
+
+        # MERGE EVERYTHING
+
+        results = []
+
+        for dest in all_destinations:
+            # 1. Identify City
+            search_city = dest.name.lower().strip()
+            
+            # 2. Get City Data
+            h_data = city_hotel_map.get(search_city)
+            r_count = city_resto_map.get(search_city, 0)
+
+            if h_data:
+                # Basic City Info
+                dest.hotel_count = h_data['count']
+                dest.restaurant_count = r_count
+                dest.rating = h_data['rating']
+                dest.state = h_data['state']
+                dest.country = h_data['country']
+
+                # 3. Identify State (from the Hotel Data we just found)
+                state_name = h_data['state']
+                
+                # 4. Get State-wise Totals
+                if state_name:
+                    search_state = state_name.lower().strip()
+                    dest.state_hotel_count = state_hotel_map.get(search_state, 0)
+                    dest.state_restaurant_count = state_resto_map.get(search_state, 0)
+                else:
+                    dest.state_hotel_count = 0
+                    dest.state_restaurant_count = 0
+
+                results.append(dest)
+        
+        # Sort by City Hotel Count
+        results.sort(key=lambda x: x.hotel_count, reverse=True)
+
+        serializer = DestinationSerializer(results, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    def _get_dashboard_target_hotel(self, request):
+        """Internal helper to resolve hotel scope based on user role."""
+        user = request.user
+        if user.is_superuser:
+            # Superuser filter via query param
+            h_id = request.query_params.get('hotel_id')
+            if h_id:
+                return Hotel.objects.filter(id=h_id).first()
+            return None # Global scope
+        
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return getattr(user, 'hotel', None)
+        
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return user.staff_profile.hotel
+        return None
+
+    def _calculate_growth(self, current, previous):
+        """Internal helper for growth %."""
+        if previous == 0:
+            return "+100%" if current > 0 else "0%"
+        change = ((current - previous) / previous) * 100
+        sign = "+" if change >= 0 else "-"
+        return f"{sign}{abs(round(change, 1))}%"
+    
+
+    # --- DASHBOARD API : TOP CARDS ---
+    @action(detail=False, methods=['get'], url_path='dashboard/stats-cards')
+    def dashboard_stats_cards(self, request):
+        user = request.user
+        target_hotel = self._get_dashboard_target_hotel(request)
+        
+        # Security Check
+        if not user.is_superuser and not target_hotel:
+            return Response({"error": "No hotel assigned."}, status=403)
+
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+
+        # 1. TOTAL REVENUE (Bookings + Restaurant | Status: Paid)
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+
+        def get_revenue(date_val):
+            qs = Invoice.objects.filter(status='paid', issued_at__date=date_val)
+            if target_hotel:
+                b_ids = Booking.objects.filter(hotel=target_hotel).values_list('id', flat=True)
+                r_ids = RestaurantOrder.objects.filter(hotel=target_hotel).values_list('id', flat=True)
+                qs = qs.filter(
+                    Q(content_type=booking_ct, object_id__in=b_ids) |
+                    Q(content_type=order_ct, object_id__in=r_ids)
+                )
+            return qs.aggregate(total=Sum('total_amount'))['total'] or 0
+
+        rev_today = get_revenue(today)
+        rev_yesterday = get_revenue(yesterday)
+
+        # 2. ROOM OCCUPANCY
+        room_qs = Room.objects.all()
+        if target_hotel: room_qs = room_qs.filter(hotel=target_hotel)
+        total_rooms = room_qs.count()
+        
+        # Today (Live)
+        occ_today = room_qs.filter(status__in=['occupied', 'reserved']).count()
+        
+        # Yesterday (Active Bookings)
+        b_qs = Booking.objects.filter(status__in=['checked_in', 'checked_out', 'confirmed'])
+        if target_hotel: b_qs = b_qs.filter(hotel=target_hotel)
+        occ_yesterday = b_qs.filter(check_in__lte=yesterday, check_out__gt=yesterday).count()
+
+        pct_today = (occ_today / total_rooms * 100) if total_rooms else 0
+        pct_yesterday = (occ_yesterday / total_rooms * 100) if total_rooms else 0
+
+        # 3. ACTIVE ORDERS (Pending/Preparing)
+        o_qs = RestaurantOrder.objects.all()
+        if target_hotel: o_qs = o_qs.filter(hotel=target_hotel)
+        
+        active_now = o_qs.filter(status__in=['pending', 'preparing']).count()
+        created_today = o_qs.filter(order_time__date=today).count()
+        created_yesterday = o_qs.filter(order_time__date=yesterday).count()
+
+        # 4. TOTAL GUESTS
+        g_qs = Booking.objects.filter(status='checked_in')
+        if target_hotel: g_qs = g_qs.filter(hotel=target_hotel)
+        guests_now = g_qs.aggregate(total=Sum('guests_count'))['total'] or 0
+        
+        g_y_qs = Booking.objects.filter(
+            status__in=['checked_in', 'checked_out', 'confirmed'],
+            check_in__lte=yesterday, check_out__gt=yesterday
+        )
+        if target_hotel: g_y_qs = g_y_qs.filter(hotel=target_hotel)
+        guests_yesterday = g_y_qs.aggregate(total=Sum('guests_count'))['total'] or 0
+
+        return Response({
+            "revenue": {
+                "value": float(rev_today),
+                "growth": self._calculate_growth(rev_today, rev_yesterday)
+            },
+            "room_occupancy": {
+                "value": f"{round(pct_today)}%",
+                "growth": self._calculate_growth(pct_today, pct_yesterday)
+            },
+            "active_orders": {
+                "value": active_now,
+                "growth": self._calculate_growth(created_today, created_yesterday)
+            },
+            "total_guests": {
+                "value": guests_now,
+                "growth": self._calculate_growth(guests_now, guests_yesterday)
+            }
+        })
+
+
+    # --- DASHBOARD API : TODAY SUMMARY ---
+    @action(detail=False, methods=['get'], url_path='dashboard/today-summary')
+    def dashboard_today_summary(self, request):
+        user = request.user
+        target_hotel = self._get_dashboard_target_hotel(request)
+        today = timezone.localdate()
+
+        if not user.is_superuser and not target_hotel:
+            return Response({"error": "No hotel assigned."}, status=403)
+
+        b_qs = Booking.objects.all()
+        o_qs = RestaurantOrder.objects.all()
+        if target_hotel:
+            b_qs = b_qs.filter(hotel=target_hotel)
+            o_qs = o_qs.filter(hotel=target_hotel)
+
+        # 1. Counts
+        check_ins = b_qs.filter(check_in=today).count()
+        check_outs = b_qs.filter(check_out=today).count()
+        food_orders = o_qs.filter(order_time__date=today, status__in=['served', 'preparing', 'completed']).count()
+
+        # 2. Revenue Today
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+        
+        b_ids = b_qs.values_list('id', flat=True)
+        r_ids = o_qs.values_list('id', flat=True)
+        
+        rev_qs = Invoice.objects.filter(status='paid', issued_at__date=today)
+        if target_hotel:
+            rev_qs = rev_qs.filter(
+                Q(content_type=booking_ct, object_id__in=b_ids) |
+                Q(content_type=order_ct, object_id__in=r_ids)
+            )
+        revenue = rev_qs.aggregate(total=Sum('total_amount'))['total'] or 0
+
+        return Response({
+            "check_ins": check_ins,
+            "check_outs": check_outs,
+            "food_orders": food_orders,
+            "revenue": float(revenue)
+        })
+    
+    @action(detail=False, methods=['get'], url_path='dashboard/recent-activities')
+    def recent_activities(self, request):
+        """
+        Returns exactly 4 most recent activities from:
+        1. Bookings (Confirmed, Checked In, Checked Out)
+        2. Restaurant Orders (Ready, Served)
+        3. Maintenance (Completed, Reported)
+        """
+        user = request.user
+        target_hotel = self._get_dashboard_target_hotel(request)
+
+        if not user.is_superuser and not target_hotel:
+            return Response({"error": "No hotel assigned."}, status=403)
+
+        activities = []
+        fetch_limit = 10  
+
+        # --- 1. BOOKING ACTIVITIES (FIXED SORTING) ---
+        b_qs = Booking.objects.all().select_related('user', 'room')
+        if target_hotel:
+            b_qs = b_qs.filter(hotel=target_hotel)
+        
+        # Coalesce Logic: 
+        # Sabse pehle Check-out time dekhega -> nahi to Check-in -> nahi to Created
+        # Isse "Just Now" wali activity sabse upar aayegi.
+        recent_bookings = b_qs.filter(
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        ).annotate(
+            last_activity=Coalesce('check_out_time', 'check_in_time', 'created_at')
+        ).order_by('-last_activity')[:fetch_limit]
+
+        for b in recent_bookings:
+            # User Name Fix (full_name check)
+            if b.user:
+                if hasattr(b.user, 'full_name') and b.user.full_name:
+                    guest_name = b.user.full_name
+                elif hasattr(b.user, 'get_full_name'):
+                    guest_name = b.user.get_full_name()
+                else:
+                    guest_name = b.user.fullname or "Guest"
+            else:
+                guest_name = "Guest"
+
+            room_num = b.room.room_number if b.room else "N/A"
+            
+            # Timestamp Logic (Priority Wise)
+            # Ab hum wahi time lenge jo sorting me use kiya (last_activity)
+            timestamp = getattr(b, 'last_activity', b.created_at) or timezone.now()
+
+            msg = ""
+            priority = "low"
+
+            if b.status == 'confirmed':
+                msg = f"New booking confirmed for Room {room_num}"
+                priority = "high"
+            elif b.status == 'checked_in':
+                msg = f"{guest_name} checked in to Room {room_num}"
+                priority = "medium"
+            elif b.status == 'checked_out':
+                msg = f"{guest_name} checked out"
+                priority = "low"
+            
+            if msg:
+                activities.append({
+                    "description": msg,
+                    "timestamp": timestamp,
+                    "priority": priority,
+                    "type": "booking"
+                })
+
+        # --- 2. RESTAURANT ACTIVITIES ---
+        try:
+            o_qs = RestaurantOrder.objects.all()
+            if target_hotel:
+                o_qs = o_qs.filter(hotel=target_hotel)
+
+            # Sort by latest update/order time
+            recent_orders = o_qs.filter(
+                status__in=['ready', 'served']
+            ).order_by('-created_at')[:fetch_limit]
+
+            for o in recent_orders:
+                order_id = getattr(o, 'order_id', str(o.id)[:8])
+                ts = getattr(o, 'order_time', getattr(o, 'created_at', timezone.now()))
+
+                if o.status == 'ready':
+                    msg = f"Order #{order_id} ready for service"
+                    priority = "medium"
+                elif o.status == 'served':
+                    msg = f"Order #{order_id} served successfully"
+                    priority = "low"
+                else:
+                    continue
+
+                activities.append({
+                    "description": msg,
+                    "timestamp": ts,
+                    "priority": priority,
+                    "type": "restaurant"
+                })
+        except Exception:
+            pass 
+
+        # --- 3. MAINTENANCE ACTIVITIES ---
+        try:
+            from maintenance.models import MaintenanceTask
+            m_qs = MaintenanceTask.objects.all().select_related('room')
+            if target_hotel:
+                m_qs = m_qs.filter(hotel=target_hotel)
+
+            recent_tasks = m_qs.filter(
+                status__in=['completed', 'pending']
+            ).order_by('-created_at')[:fetch_limit]
+
+            for t in recent_tasks:
+                room_num = t.room.room_number if t.room else "General"
+                ts = getattr(t, 'created_at', timezone.now())
+
+                if t.status == 'completed':
+                    msg = f"Room {room_num} maintenance completed"
+                    priority = "medium"
+                elif t.status == 'pending':
+                    msg = f"Maintenance reported for Room {room_num}"
+                    priority = "high"
+                else:
+                    continue
+
+                activities.append({
+                    "description": msg,
+                    "timestamp": ts,
+                    "priority": priority,
+                    "type": "maintenance"
+                })
+        except Exception:
+            pass
+
+        # --- 4. MERGE & SORT ---
+        def get_sort_key(x):
+            return x['timestamp'] or timezone.now()
+
+        # Final sort sabhi types ko mila ke
+        activities.sort(key=get_sort_key, reverse=True)
+
+        # Sirf top 4 bhejna
+        final_list = activities[:4]
+
+        response_data = []
+        for item in final_list:
+            response_data.append({
+                "description": item['description'],
+                "time_ago": f"{timesince(item['timestamp'])} ago",
+                "priority": item['priority'],
+                "type": item['type']
+            })
+
+        return Response(response_data)
+    
+
+    @action(detail=False, methods=['get'], url_path='dashboard/activities')
+    def dashboard_activities(self, request):
+        """
+        Aggregates recent activities from Bookings, Payments, Maintenance, and Orders.
+        Supports pagination via ?limit=6&offset=0
+        """
+        user = request.user
+        target_hotel = self._get_dashboard_target_hotel(request)
+
+        if not user.is_superuser and not target_hotel:
+            return Response({"error": "No hotel assigned."}, status=403)
+
+        # 1. Get Pagination Params (Default 6 items)
+        try:
+            limit = int(request.query_params.get('limit', 6))
+            offset = int(request.query_params.get('offset', 0))
+        except ValueError:
+            limit = 6
+            offset = 0
+
+        # We fetch slightly more than needed from each table to ensure correct sorting
+        fetch_limit = limit + offset 
+        activities = []
+
+        # --- A. NEW BOOKINGS ---
+        bookings = Booking.objects.filter(hotel=target_hotel).select_related('user', 'room').order_by('-created_at')[:fetch_limit]
+        for b in bookings:
+            # FIX: User Name Handling
+            u_name = b.user.full_name if hasattr(b.user, 'full_name') and b.user.full_name else b.user.email
+            
+            activities.append({
+                'id': str(b.id),
+                'type': 'booking',
+                'title': 'New Booking Created',
+                'description': f"Room {b.room.room_number if b.room else 'Unassigned'} booked by {u_name}",
+                'timestamp': b.created_at,
+                'status_color': 'success', # Green
+                'icon_text': 'Booking',
+                # 'staff_name': 'Reception Desk', 
+                'staff_designation': 'Reception Desk',
+                'staff_department': 'Reception'
+            })
+
+        # --- B. GUEST CHECK-IN ---
+        checkins = Booking.objects.filter(hotel=target_hotel, status='checked_in').select_related('user', 'room').order_by('-check_in_time')[:fetch_limit]
+        for b in checkins:
+            u_name = b.user.full_name if hasattr(b.user, 'full_name') and b.user.full_name else b.user.email
+            
+            activities.append({
+                'id': str(b.id) + "_in",
+                'type': 'checkin',
+                'title': 'Guest Check-in',
+                'description': f"{u_name} checked into Room {b.room.room_number if b.room else 'N/A'}",
+                'timestamp': b.check_in_time or b.updated_at,
+                'status_color': 'purple', 
+                'icon_text': 'Checkin',
+                # 'staff_name': 'Staff_name', 
+                'staff_designation': 'Front desk',
+                'staff_department': 'Reception'
+            })
+
+        # --- C. PAYMENTS (BILLING) ---
+        # Assuming Invoice model exists
+        try:
+            invoices = Invoice.objects.filter(status='paid').order_by('-issued_at')[:fetch_limit]
+            # Filter logic for hotel scope if Invoice has hotel/booking link
+            for inv in invoices:
+                 # Check access rights via content_type or direct link
+                 # Skipping strict check for brevity, assuming localized logic or global finance view
+                 activities.append({
+                    'id': str(inv.id),
+                    'type': 'payment',
+                    'title': 'Payment Received',
+                    'description': f"Payment of {inv.total_amount} processed",
+                    'timestamp': inv.issued_at,
+                    'status_color': 'primary', # Blue
+                    'icon_text': 'Payment',
+                    # 'staff_name': 'staff_name',
+                    # 'staff_designation': '',
+                    'staff_department': 'BillinG System'
+                })
+        except Exception:
+            pass 
+
+        # --- D. RESTAURANT ORDERS ---
+        try:
+            orders = RestaurantOrder.objects.filter(hotel=target_hotel, status='completed').select_related('table').order_by('-completed_at')[:fetch_limit]
+            for o in orders:
+                activities.append({
+                    'id': str(o.id),
+                    'type': 'order',
+                    'title': 'Restaurant Order',
+                    'description': f"Table {o.table.number if o.table else 'N/A'} - Order #{o.order_code} completed",
+                    'timestamp': o.completed_at or o.updated_at,
+                    'status_color': 'success',
+                    'icon_text': 'Order',
+                    # 'staff_name': 'staff_name',
+                    'staff_designation': 'Kitchen Staff',
+                    'staff_department': 'Restaurant'
+                })
+        except Exception:
+            pass
+
+        # --- E. MAINTENANCE REQUESTS (With Staff Details) ---
+        try:
+            from maintenance.models import MaintenanceTask
+            tasks = MaintenanceTask.objects.filter(hotel=target_hotel).order_by('-created_at')[:fetch_limit]
+            for t in tasks:
+                staff_name = "Unassigned"
+                staff_desig = ""
+                staff_dept = ""
+                
+                if t.assigned_to: 
+                    # FIX: User Name Handling here too
+                    u_name = t.assigned_to.full_name if hasattr(t.assigned_to, 'full_name') and t.assigned_to.full_name else t.assigned_to.email
+
+                    # Query Staff model based on user to get designation
+                    staff_obj = Staff.objects.filter(user=t.assigned_to).first()
+                    if staff_obj:
+                        staff_name = u_name
+                        staff_desig = staff_obj.designation
+                        staff_dept = staff_obj.department
+                    else:
+                        staff_name = u_name
+
+                activities.append({
+                    'id': str(t.id),
+                    'type': 'maintenance',
+                    'title': 'Maintenance Request',
+                    'description': f"{t.title} needed in {t.location}",
+                    'timestamp': t.created_at,
+                    'status_color': 'warning', # Yellow/Orange
+                    'icon_text': 'Maintenance',
+                    'staff_name': staff_name,
+                    'staff_designation': staff_desig,
+                    'staff_department': staff_dept
+                })
+        except ImportError:
+            pass # Skip if maintenance app not ready or circular import issues
+        except Exception:
+            pass
+
+        # --- MERGE, SORT, & SLICE ---
+        
+        # 1. Sort all lists combined by timestamp descending (newest first)
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        # 2. Apply Pagination (Slice)
+        # If user asks for offset=0, limit=6 -> [0:6]
+        # If user asks for offset=6, limit=6 -> [6:12]
+        paginated_activities = activities[offset : offset + limit]
+
+        # 3. Serialize
+        serializer = ActivityLogSerializer(paginated_activities, many=True)
+        
+        return Response({
+            "count": len(activities), # Total available in current fetch context
+            "next_offset": offset + limit if len(activities) > offset + limit else None,
+            "results": serializer.data
+        })
 
 class RoomCategoryViewSet(ProtectedModelViewSet):
     queryset = RoomCategory.objects.all()
@@ -97,6 +794,14 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
 
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer: sirf available hotels ki categories
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return qs.filter(hotel__status='available')
 
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
@@ -130,7 +835,23 @@ class RoomViewSet(ProtectedModelViewSet):
         # Admin → rooms only from their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel=user.hotel)
+        
+            # ✅ Vendor → rooms of linked hotels
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            hotel_slug = self.request.query_params.get('hotel')
 
+            qs = qs.filter(
+                status='available',
+                # is_available=True,
+                hotel__status='available'
+            )
+
+            if hotel_slug:
+                qs = qs.filter(hotel__slug=hotel_slug)
+
+            return qs
         # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
@@ -143,13 +864,15 @@ class RoomViewSet(ProtectedModelViewSet):
 
         # Superuser → choose hotel manually in POST
         if user.is_superuser:
-            serializer.save()
-            return
+            return serializer.save()
+            
 
         # Admin → forced to their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             serializer.save(hotel=user.hotel)
             return
+        
+        
 
         # Staff → forced to their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
@@ -269,19 +992,22 @@ class RoomViewSet(ProtectedModelViewSet):
     def dashboard_summary(self, request):
         """
         Dashboard summary:
-        - Superuser → can filter by ?hotel=<hotel_slug>
-        - Admin → only their assigned hotel
-        - Staff → only their assigned hotel
+        - Superuser → all rooms OR filter by ?hotel=<slug>
+        - Admin → their hotel
+        - Vendor → their hotel
+        - Staff → their hotel
+        - Customer → MUST pass ?hotel=<slug>
         """
 
         user = request.user
+        rooms = Room.objects.none()
+
+        hotel_slug = request.query_params.get("hotel")
 
         # -----------------------------------
-        # SUPERUSER → filter by hotel slug
+        # SUPERUSER → all or filtered
         # -----------------------------------
         if user.is_superuser:
-            hotel_slug = request.query_params.get('hotel')  # ⭐ filter by slug
-
             if hotel_slug:
                 try:
                     hotel = Hotel.objects.get(slug=hotel_slug)
@@ -295,25 +1021,50 @@ class RoomViewSet(ProtectedModelViewSet):
                 rooms = Room.objects.all()
 
         # -----------------------------------
-        # ADMIN → rooms for their own hotel only
+        # ADMIN → own hotel
         # -----------------------------------
-        elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            if not hasattr(user, 'hotel') or user.hotel is None:
+        elif hasattr(user, "role") and user.role.name.lower() == "admin":
+            if not hasattr(user, "hotel") or not user.hotel:
                 return Response(
                     {"error": "Admin does not have a hotel assigned."},
                     status=status.HTTP_403_FORBIDDEN
                 )
-
             rooms = Room.objects.filter(hotel=user.hotel)
 
         # -----------------------------------
-        # STAFF → only rooms of their hotel
+        # VENDOR → vendor hotel
         # -----------------------------------
-        elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+        elif hasattr(user, "role") and user.role.name.lower() == "vendor":
+            rooms = Room.objects.filter(hotel__vendor=user)
+
+        # -----------------------------------
+        # STAFF → staff hotel
+        # -----------------------------------
+        elif hasattr(user, "staff_profile") and user.staff_profile.hotel:
             rooms = Room.objects.filter(hotel=user.staff_profile.hotel)
 
         # -----------------------------------
-        # Others → No access
+        # CUSTOMER → must pass hotel slug
+        # -----------------------------------
+        elif hasattr(user, "role") and user.role.name.lower() == "customer":
+            if not hotel_slug:
+                return Response(
+                    {"error": "Hotel slug is required for customer."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+            except Hotel.DoesNotExist:
+                return Response(
+                    {"error": "Invalid hotel slug."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            rooms = Room.objects.filter(hotel=hotel)
+
+        # -----------------------------------
+        # Others → no access
         # -----------------------------------
         else:
             return Response(
@@ -324,14 +1075,14 @@ class RoomViewSet(ProtectedModelViewSet):
         # -----------------------------------
         # GROUP BY STATUS
         # -----------------------------------
-        status_counts = rooms.values('status').annotate(total=Count('id'))
-        data = {item['status']: item['total'] for item in status_counts}
+        status_counts = rooms.values("status").annotate(total=Count("id"))
+        data = {item["status"]: item["total"] for item in status_counts}
 
-        # Ensure all statuses appear even if zero
-        for status_key in ['available', 'occupied', 'reserved', 'maintenance']:
+        # Ensure all statuses exist
+        for status_key in ["available", "occupied", "reserved", "maintenance"]:
             data.setdefault(status_key, 0)
 
-        data['total_rooms'] = sum(data.values())
+        data["total_rooms"] = sum(data.values())
 
         return Response(data)
 
@@ -522,6 +1273,15 @@ class BookingViewSet(ProtectedModelViewSet):
         staff_profile = getattr(user, 'staff_profile', None)
         if staff_profile and getattr(staff_profile, 'hotel', None):
             return qs.filter(hotel=staff_profile.hotel)
+        
+        # ✅ Vendor → bookings of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own bookings
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
 
         # ❌ Others — no access
         return qs.none()
@@ -634,6 +1394,14 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
         # Staff: only their assigned hotel
         if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
             return qs.filter(room__hotel=user.staff_profile.hotel)
+            # ✅ Vendor → requests of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(room__hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own service requests
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
         return qs.none()
 
     # List API (with optional filters for dashboard, e.g. status, date)
@@ -822,3 +1590,387 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
 
         return Response(data)
 
+
+
+
+class FeaturedListingView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Logic to mix 7/8 or 6/9
+        # Randomly choose ek combination
+        combinations = [(7, 8), (8, 7), (9, 6), (6, 9)]
+        num_hotels, num_restaurants = random.choice(combinations)
+
+        # --- Fetch Hotels ---
+        # Annotate karte hue taaki DB queries kam ho (Optimization)
+        # min_price: RoomCategory se sabse kam price
+        # avg_rating: HotelReview se average rating
+        hotels = Hotel.objects.filter(status='available').annotate(
+            min_price=Min('room_categories__price_per_night'),
+            avg_rating=Avg('reviews__rating'),
+            total_reviews=Count('reviews')
+        ).order_by('?')[:num_hotels] # order_by('?') shuffles result in DB
+
+        # --- Fetch Restaurants ---
+        restaurants = Restaurant.objects.filter(status='open').order_by('?')[:num_restaurants]
+
+        # --- Serialize Data ---
+        hotel_data = HotelListingSerializer(hotels, many=True, context={'request': request}).data
+        restaurant_data = RestaurantListingSerializer(restaurants, many=True, context={'request': request}).data
+
+        # --- Combine and Shuffle ---
+        combined_data = hotel_data + restaurant_data
+        random.shuffle(combined_data) # Python level pe shuffle taaki mix ho jaye
+
+        return Response(combined_data)
+    
+
+class DownloadAndroidAppView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Database se latest config nikalo
+        app_config = MobileAppConfig.objects.first()
+        
+        if app_config and app_config.android_apk:
+            file_handle = app_config.android_apk.open()
+            
+            # 'as_attachment=True' hi file ko download karwata hai
+            response = FileResponse(file_handle, as_attachment=True)
+            
+            # Optional: Filename set karna
+            response['Content-Disposition'] = f'attachment; filename="HMS.apk"'
+            return response
+        else:
+            return Response({"error": "APK file not found on server"}, status=404)
+
+class DownloadIOSAppView(APIView):
+    permission_classes = [AllowAny]  # Authentication hatane ke liye
+
+    def get(self, request):
+        app_config = MobileAppConfig.objects.first()
+        
+        if app_config and app_config.ios_ipa:
+            # File open karo
+            file_handle = app_config.ios_ipa.open()
+            
+            # FileResponse return karo
+            response = FileResponse(file_handle, as_attachment=True)
+            
+            # Browser ko batane ke liye ki ye .ipa file h
+            # 'TravelApp.ipa' wo naam h jo user ke phone me save hoga
+            response['Content-Disposition'] = 'attachment; filename="HMS.ipa"'
+            
+            return response
+        else:
+            return Response({"error": "iOS IPA file not found on server"}, status=404)
+        
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter
+class PackageViewSet(ProtectedModelViewSet):
+    # 1. Base Queryset
+    queryset = Package.objects.filter(is_active=True).order_by('-created_at')
+    serializer_class = PackageSerializer
+    model_name = 'Package'
+    lookup_field = 'slug'
+
+    # 2. Filter Backends (SearchFilter add kiya hai taaki search bar kaam kare)
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    
+    # 3. Exact Filters (Dropdowns ke liye)
+    # 'departure_city' add kiya hai taaki "From Delhi" wala filter chale
+    filterset_fields = ['package_type', 'category', 'departure_city']
+
+    # 4. Smart Search (Text typing ke liye - "To" field)
+    search_fields = ['name', 'locations', 'description']
+
+    def get_queryset(self):
+        # Base queryset uthao
+        qs = super().get_queryset() # ya Package.objects.filter(is_active=True).order_by('-created_at')
+        
+        # --- Travellers Logic (New) ---
+        # Agar user bhejta hai ?travellers=4
+        travellers = self.request.query_params.get('travellers')
+        
+        if travellers:
+            try:
+                count = int(travellers)
+                # Check karo: Ya to seats Unlimited hon (null) YA seats count se zyada hon
+                qs = qs.filter(Q(total_seats__gte=count) | Q(total_seats__isnull=True))
+            except ValueError:
+                pass # Agar user ne number nahi bheja to ignore karo
+
+        return qs
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return super().get_permissions()
+
+    # def get_queryset(self):
+    #     # Public Queryset
+    #     qs = Package.objects.filter(is_active=True)
+        
+    #     # Filter by Type (International / Domestic)
+    #     # Usage: /api/packages/?type=international
+    #     p_type = self.request.query_params.get('type')
+    #     if p_type:
+    #         qs = qs.filter(package_type__iexact=p_type)
+            
+    #   return qs
+    
+    # def get_permissions(self):
+    #     # Public users (Bina login) sirf dekh sakte hain (GET)
+    #     if self.action in ['list', 'retrieve']:
+    #         return [AllowAny()]
+    #     # Create/Update/Delete ke liye Login zaruri hai
+    #     return [IsAuthenticated()]
+
+    # def get_queryset(self):
+    #     """
+    #     Logic:
+    #     1. Public User -> Dekhega SAARE Active Packages.
+    #     2. Superuser -> Dekhega SAB Kuch.
+    #     3. Hotel Admin -> Dekhega SIRF KHUD ke banaye hue packages.
+    #     """
+    #     user = self.request.user
+    #     qs = Package.objects.all().order_by('-created_at')
+
+    #     # Public User (Anonymous)
+    #     if not user.is_authenticated:
+    #         return qs.filter(is_active=True)
+
+    #     # Superuser (Boss)
+    #     if user.is_superuser:
+    #         return qs
+
+    #     # Hotel Admin (Khud ka maal dekhega)
+    #     if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+    #         return qs.filter(owner=user)
+        
+    #     # Staff (Agar staff access hai to wo apne admin ke packages dekhega)
+    #     if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+    #          return qs.filter(owner=user.staff_profile.hotel.owner)
+
+    #     # Fallback for Public active packages if user fits none above
+    #     return qs.filter(is_active=True)
+
+    # def perform_create(self, serializer):
+    #     """
+    #     Jab Package create ho, to Owner apne aap logged-in Admin set ho jaye.
+    #     """
+    #     user = self.request.user
+        
+    #     if user.is_superuser:
+    #         # Superuser can create, but ideally should assign via serializer if needed.
+    #         # Here keeping it simple: Superuser becomes owner
+    #         serializer.save(owner=user)
+            
+    #     elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
+    #         # Admin becomes owner
+    #         serializer.save(owner=user)
+            
+    #     else:
+    #         # Koi aur create nahi kar sakta
+    #         from rest_framework.exceptions import PermissionDenied
+    #         raise PermissionDenied("Only Admins can create packages.")
+
+
+# class HomeDashboardViewSet(ProtectedModelViewSet):
+#     """
+#     Dedicated Dashboard ViewSet inheriting from ProtectedModelViewSet.
+#     Handles stats for both Hotel (Rooms/Guests) and Restaurant (Orders).
+#     """
+#     # Required attributes for ProtectedModelViewSet
+#     queryset = Hotel.objects.all()
+#     serializer_class = HotelSerializer 
+#     model_name = 'Dashboard' # Internal logging ke liye
+
+#     # --- HELPER: Role Isolation & Hotel Scope ---
+#     def get_target_hotel(self, request):
+#         """
+#         Logic to find which hotel data to show based on User Role.
+#         """
+#         user = request.user
+        
+#         # 1. Superuser
+#         if user.is_superuser:
+#             # Superuser can filter via ?hotel_id=UUID
+#             hotel_id = request.query_params.get('hotel_id')
+#             if hotel_id:
+#                 return Hotel.objects.filter(id=hotel_id).first()
+#             return None  # None means "All Hotels" (Global View)
+        
+#         # 2. Admin: Own Hotel
+#         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+#             return getattr(user, 'hotel', None)
+        
+#         # 3. Staff: Assigned Hotel
+#         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+#             return user.staff_profile.hotel
+            
+#         return None # No access
+
+#     # --- HELPER: Growth % Calculation ---
+#     def calculate_growth(self, current, previous):
+#         if previous == 0:
+#             return "+100%" if current > 0 else "0%"
+#         change = ((current - previous) / previous) * 100
+#         sign = "+" if change >= 0 else "-"
+#         return f"{sign}{abs(round(change, 1))}%"
+
+#     # --- API 1: PAGE 1 - TOP CARDS ---
+#     @action(detail=False, methods=['get'], url_path='stats-cards')
+#     def stats_cards(self, request):
+#         user = request.user
+#         target_hotel = self.get_target_hotel(request)
+        
+#         # Safety Check for non-superusers
+#         if not user.is_superuser and not target_hotel:
+#             return Response({"error": "No hotel assigned."}, status=403)
+
+#         today = timezone.localdate()
+#         yesterday = today - timedelta(days=1)
+
+#         # 1. TOTAL REVENUE (Bookings + Restaurant | Status: Paid)
+#         booking_ct = ContentType.objects.get_for_model(Booking)
+#         order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+
+#         def get_revenue(date_val):
+#             # Base Filter
+#             qs = Invoice.objects.filter(status='paid', issued_at__date=date_val)
+            
+#             # Scope Filter
+#             if target_hotel:
+#                 b_ids = Booking.objects.filter(hotel=target_hotel).values_list('id', flat=True)
+#                 r_ids = RestaurantOrder.objects.filter(hotel=target_hotel).values_list('id', flat=True)
+                
+#                 qs = qs.filter(
+#                     Q(content_type=booking_ct, object_id__in=b_ids) |
+#                     Q(content_type=order_ct, object_id__in=r_ids)
+#                 )
+            
+#             return qs.aggregate(total=Sum('total_amount'))['total'] or 0
+
+#         rev_today = get_revenue(today)
+#         rev_yesterday = get_revenue(yesterday)
+
+#         # 2. ROOM OCCUPANCY
+#         room_qs = Room.objects.all()
+#         if target_hotel: room_qs = room_qs.filter(hotel=target_hotel)
+        
+#         total_rooms = room_qs.count()
+        
+#         # Today: Live Status
+#         occ_today_count = room_qs.filter(status='occupied').count()
+        
+#         # Yesterday: Calculated from bookings active yesterday
+#         b_qs = Booking.objects.filter(status__in=['checked_in', 'checked_out', 'confirmed'])
+#         if target_hotel: b_qs = b_qs.filter(hotel=target_hotel)
+        
+#         occ_yesterday_count = b_qs.filter(
+#             check_in__lte=yesterday, 
+#             check_out__gt=yesterday
+#         ).count()
+
+#         pct_today = (occ_today_count / total_rooms * 100) if total_rooms else 0
+#         pct_yesterday = (occ_yesterday_count / total_rooms * 100) if total_rooms else 0
+
+#         # 3. ACTIVE ORDERS (Pending/Preparing)
+#         o_qs = RestaurantOrder.objects.all()
+#         if target_hotel: o_qs = o_qs.filter(hotel=target_hotel)
+        
+#         # Value: Live Active
+#         active_now = o_qs.filter(status__in=['pending', 'preparing']).count()
+        
+#         # Growth: Based on creation volume
+#         created_today = o_qs.filter(created_at__date=today).count()
+#         created_yesterday = o_qs.filter(created_at__date=yesterday).count()
+
+#         # 4. TOTAL GUESTS
+#         g_qs = Booking.objects.filter(status='checked_in')
+#         if target_hotel: g_qs = g_qs.filter(hotel=target_hotel)
+        
+#         guests_now = g_qs.aggregate(total=Sum('guests_count'))['total'] or 0
+        
+#         # Guests Yesterday
+#         g_y_qs = Booking.objects.filter(
+#             status__in=['checked_in', 'checked_out', 'confirmed'],
+#             check_in__lte=yesterday, 
+#             check_out__gt=yesterday
+#         )
+#         if target_hotel: g_y_qs = g_y_qs.filter(hotel=target_hotel)
+#         guests_yesterday = g_y_qs.aggregate(total=Sum('guests_count'))['total'] or 0
+
+#         return Response({
+#             "revenue": {
+#                 "value": float(rev_today),
+#                 "growth": self.calculate_growth(rev_today, rev_yesterday)
+#             },
+#             "room_occupancy": {
+#                 "value": f"{round(pct_today)}%",
+#                 "growth": self.calculate_growth(pct_today, pct_yesterday)
+#             },
+#             "active_orders": {
+#                 "value": active_now,
+#                 "growth": self.calculate_growth(created_today, created_yesterday)
+#             },
+#             "total_guests": {
+#                 "value": guests_now,
+#                 "growth": self.calculate_growth(guests_now, guests_yesterday)
+#             }
+#         })
+
+#     # --- API 2: PAGE 2 - TODAY'S SUMMARY ---
+#     @action(detail=False, methods=['get'], url_path='today-summary')
+#     def today_summary(self, request):
+#         user = request.user
+#         target_hotel = self.get_target_hotel(request)
+#         today = timezone.localdate()
+
+#         if not user.is_superuser and not target_hotel:
+#             return Response({"error": "No hotel assigned."}, status=403)
+
+#         b_qs = Booking.objects.all()
+#         o_qs = RestaurantOrder.objects.all()
+        
+#         if target_hotel:
+#             b_qs = b_qs.filter(hotel=target_hotel)
+#             o_qs = o_qs.filter(hotel=target_hotel)
+
+#         # 1. Check-ins Today
+#         check_ins = b_qs.filter(check_in=today).count()
+
+#         # 2. Check-outs Today
+#         check_outs = b_qs.filter(check_out=today).count()
+
+#         # 3. Food Orders Today (Served/Preparing/Completed)
+#         food_orders = o_qs.filter(
+#             created_at__date=today, 
+#             status__in=['served', 'preparing', 'completed']
+#         ).count()
+
+#         # 4. Revenue Today
+#         booking_ct = ContentType.objects.get_for_model(Booking)
+#         order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+        
+#         b_ids = b_qs.values_list('id', flat=True)
+#         r_ids = o_qs.values_list('id', flat=True)
+        
+#         revenue_qs = Invoice.objects.filter(status='paid', issued_at__date=today)
+        
+#         if target_hotel:
+#              revenue_qs = revenue_qs.filter(
+#                 Q(content_type=booking_ct, object_id__in=b_ids) |
+#                 Q(content_type=order_ct, object_id__in=r_ids)
+#             )
+             
+#         revenue = revenue_qs.aggregate(total=Sum('total_amount'))['total'] or 0
+
+#         return Response({
+#             "check_ins": check_ins,
+#             "check_outs": check_outs,
+#             "food_orders": food_orders,
+#             "revenue": float(revenue)
+#         })
