@@ -203,7 +203,6 @@ class GuestSerializer(serializers.ModelSerializer):
             "id_proof_number",
             "id_proof_file",
             "special_request",
-            "age",
         ]
         read_only_fields = ['slug', 'created_at']
 
@@ -229,7 +228,8 @@ class BookingSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     guests = serializers.ListField(
         write_only=True,
-        required=True
+        required=True,
+        allow_empty=True
     )
 
     room_number = serializers.CharField(source="room.room_number", read_only=True)
@@ -270,40 +270,38 @@ class BookingSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context["request"]
 
-        # -------------------------
-        # 🔹 Parse guests manually
-        # -------------------------
-        guests_data = []
-        index = 0
+        # remove guests from DRF flow
+        validated_data.pop("guests", None)
 
+        booking = Booking.objects.create(**validated_data)
+
+        # reserve room
+        booking.room.status = "reserved"
+        booking.room.save()
+
+        # ----------------------------
+        # MANUAL GUEST PARSING
+        # ----------------------------
+        index = 0
         while True:
             prefix = f"guests[{index}]"
-
             if f"{prefix}[first_name]" not in request.data:
                 break
 
-            guests_data.append({
-                "first_name": request.data.get(f"{prefix}[first_name]"),
-                "last_name": request.data.get(f"{prefix}[last_name]"),
-                "email": request.data.get(f"{prefix}[email]"),
-                "phone": request.data.get(f"{prefix}[phone]"),
-                "address": request.data.get(f"{prefix}[address]"),
-                "gender": request.data.get(f"{prefix}[gender]"),
-                "id_proof_type": request.data.get(f"{prefix}[id_proof_type]"),
-                "id_proof_number": request.data.get(f"{prefix}[id_proof_number]"),
-                "id_proof_file": request.FILES.get(f"{prefix}[id_proof_file]"),
-                "special_request": request.data.get(f"{prefix}[special_request]"),
-            })
+            Guest.objects.create(
+                booking=booking,
+                first_name=request.data.get(f"{prefix}[first_name]"),
+                last_name=request.data.get(f"{prefix}[last_name]"),
+                email=request.data.get(f"{prefix}[email]"),
+                phone=request.data.get(f"{prefix}[phone]"),
+                gender=request.data.get(f"{prefix}[gender]"),
+                id_proof_type=request.data.get(f"{prefix}[id_proof_type]"),
+                id_proof_number=request.data.get(f"{prefix}[id_proof_number]"),
+                id_proof_file=request.FILES.get(f"{prefix}[id_proof_file]"),
+                special_request=request.data.get(f"{prefix}[special_request]"),
+            )
 
             index += 1
-        
-        booking = Booking.objects.create(**validated_data)
-        room = booking.room
-        room.status = "reserved"
-        room.save()
-
-        for guest in guests_data:
-            Guest.objects.create(booking=booking, **guest)
             
         # ✅ Auto-generate invoice for this booking
         content_type = ContentType.objects.get_for_model(Booking)
