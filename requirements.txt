@@ -32,6 +32,7 @@ django-js-asset==3.1.2
 djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.1
 drf-extra-fields==3.7.0
+drf-spectacular==0.29.0
 drf-yasg==1.21.10
 et_xmlfile==2.0.0
 filetype==1.2.0
@@ -55,6 +56,8 @@ idna==3.10
 inflection==0.5.1
 jiter==0.10.0
 joblib==1.5.1
+jsonschema==4.25.1
+jsonschema-specifications==2025.9.1
 kombu==5.5.4
 multidict==6.7.0
 nltk==3.9.1
@@ -81,9 +84,11 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 pytz==2025.2
 PyYAML==6.0.2
+referencing==0.37.0
 regex==2025.7.34
 reportlab==4.4.5
 requests==2.32.4
+rpds-py==0.30.0
 rsa==4.9.1
 six==1.17.0
 sniffio==1.3.1

@@ -31,27 +31,35 @@ class HotelViewSet(ProtectedModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        qs = Hotel.objects.all()
 
-        # 1. Superuser: Sees everything
+        # 1️⃣ Superuser → all hotels
         if user.is_superuser:
-            return Hotel.objects.all()
+            return qs
 
-        if hasattr(user, 'role'):
-            role_name = user.role.name.lower()
-            
-            # 2. Admin & Vendor: Only their own hotel
-            if role_name in ['admin', 'vendor']:
-                return Hotel.objects.filter(owner=user)
-            
-            # 3. Customer: Sees all available hotels
-            if role_name == 'customer':
-                return Hotel.objects.filter(status='available')
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
+
+       # ✅ Staff
+        # if hasattr(user, 'role') and user.role.name.lower() == 'staff':
+        #     return Hotel.objects.filter(staff__user=user)
+
+        # ✅ Vendor
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return Hotel.objects.filter(vendors__user=user)
+
+        # ✅ Customer
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return Hotel.objects.filter(status='available')
+
 
         # 4. Staff: Their linked hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
-
+          
         return Hotel.objects.none()
+
     
     @action(detail=False, methods=['get'], url_path='stats')
     def hotel_stats(self, request):
@@ -786,6 +794,14 @@ class RoomCategoryViewSet(ProtectedModelViewSet):
 
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer: sirf available hotels ki categories
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            return qs.filter(hotel__status='available')
 
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return qs.filter(hotel=user.staff_profile.hotel)
@@ -815,18 +831,27 @@ class RoomViewSet(ProtectedModelViewSet):
         if user.is_superuser:
             return Hotel.objects.all()
 
-        if hasattr(user, 'role'):
-            role_name = user.role.name.lower()
-            
-            # 2. Admin & Vendor: Only their own hotel
-            if role_name in ['admin', 'vendor']:
-                return Hotel.objects.filter(owner=user)
-            
-            # 3. Customer: Sees all available hotels
-            if role_name == 'customer':
-                return Hotel.objects.filter(status='available')
+        # Admin → rooms only from their hotel
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel=user.hotel)
+        
+            # ✅ Vendor → rooms of linked hotels
+        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
+            hotel_slug = self.request.query_params.get('hotel')
 
-        # 4. Staff: Their linked hotel
+            qs = qs.filter(
+                status='available',
+                # is_available=True,
+                hotel__status='available'
+            )
+
+            if hotel_slug:
+                qs = qs.filter(hotel__slug=hotel_slug)
+
+            return qs
+        # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
@@ -845,6 +870,8 @@ class RoomViewSet(ProtectedModelViewSet):
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
             serializer.save(hotel=user.hotel)
             return
+        
+        
 
         # Staff → forced to their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
@@ -964,19 +991,22 @@ class RoomViewSet(ProtectedModelViewSet):
     def dashboard_summary(self, request):
         """
         Dashboard summary:
-        - Superuser → can filter by ?hotel=<hotel_slug>
-        - Admin → only their assigned hotel
-        - Staff → only their assigned hotel
+        - Superuser → all rooms OR filter by ?hotel=<slug>
+        - Admin → their hotel
+        - Vendor → their hotel
+        - Staff → their hotel
+        - Customer → MUST pass ?hotel=<slug>
         """
 
         user = request.user
+        rooms = Room.objects.none()
+
+        hotel_slug = request.query_params.get("hotel")
 
         # -----------------------------------
-        # SUPERUSER → filter by hotel slug
+        # SUPERUSER → all or filtered
         # -----------------------------------
         if user.is_superuser:
-            hotel_slug = request.query_params.get('hotel')  # ⭐ filter by slug
-
             if hotel_slug:
                 try:
                     hotel = Hotel.objects.get(slug=hotel_slug)
@@ -990,25 +1020,50 @@ class RoomViewSet(ProtectedModelViewSet):
                 rooms = Room.objects.all()
 
         # -----------------------------------
-        # ADMIN → rooms for their own hotel only
+        # ADMIN → own hotel
         # -----------------------------------
-        elif hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            if not hasattr(user, 'hotel') or user.hotel is None:
+        elif hasattr(user, "role") and user.role.name.lower() == "admin":
+            if not hasattr(user, "hotel") or not user.hotel:
                 return Response(
                     {"error": "Admin does not have a hotel assigned."},
                     status=status.HTTP_403_FORBIDDEN
                 )
-
             rooms = Room.objects.filter(hotel=user.hotel)
 
         # -----------------------------------
-        # STAFF → only rooms of their hotel
+        # VENDOR → vendor hotel
         # -----------------------------------
-        elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+        elif hasattr(user, "role") and user.role.name.lower() == "vendor":
+            rooms = Room.objects.filter(hotel__vendor=user)
+
+        # -----------------------------------
+        # STAFF → staff hotel
+        # -----------------------------------
+        elif hasattr(user, "staff_profile") and user.staff_profile.hotel:
             rooms = Room.objects.filter(hotel=user.staff_profile.hotel)
 
         # -----------------------------------
-        # Others → No access
+        # CUSTOMER → must pass hotel slug
+        # -----------------------------------
+        elif hasattr(user, "role") and user.role.name.lower() == "customer":
+            if not hotel_slug:
+                return Response(
+                    {"error": "Hotel slug is required for customer."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+            except Hotel.DoesNotExist:
+                return Response(
+                    {"error": "Invalid hotel slug."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            rooms = Room.objects.filter(hotel=hotel)
+
+        # -----------------------------------
+        # Others → no access
         # -----------------------------------
         else:
             return Response(
@@ -1019,14 +1074,14 @@ class RoomViewSet(ProtectedModelViewSet):
         # -----------------------------------
         # GROUP BY STATUS
         # -----------------------------------
-        status_counts = rooms.values('status').annotate(total=Count('id'))
-        data = {item['status']: item['total'] for item in status_counts}
+        status_counts = rooms.values("status").annotate(total=Count("id"))
+        data = {item["status"]: item["total"] for item in status_counts}
 
-        # Ensure all statuses appear even if zero
-        for status_key in ['available', 'occupied', 'reserved', 'maintenance']:
+        # Ensure all statuses exist
+        for status_key in ["available", "occupied", "reserved", "maintenance"]:
             data.setdefault(status_key, 0)
 
-        data['total_rooms'] = sum(data.values())
+        data["total_rooms"] = sum(data.values())
 
         return Response(data)
 
@@ -1217,6 +1272,15 @@ class BookingViewSet(ProtectedModelViewSet):
         staff_profile = getattr(user, 'staff_profile', None)
         if staff_profile and getattr(staff_profile, 'hotel', None):
             return qs.filter(hotel=staff_profile.hotel)
+        
+        # ✅ Vendor → bookings of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own bookings
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
 
         # ❌ Others — no access
         return qs.none()
@@ -1329,6 +1393,14 @@ class RoomServiceRequestViewSet(ProtectedModelViewSet):
         # Staff: only their assigned hotel
         if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
             return qs.filter(room__hotel=user.staff_profile.hotel)
+            # ✅ Vendor → requests of hotels linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(room__hotel__vendors__user=user)
+
+        # ✅ Customer → ONLY their own service requests
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(user=user)
+
         return qs.none()
 
     # List API (with optional filters for dashboard, e.g. status, date)
