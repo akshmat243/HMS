@@ -82,84 +82,198 @@ class RestaurantViewSet(ProtectedModelViewSet):
 
         serializer.save(slug=slug)
 
+
+
 class MenuCategoryViewSet(ProtectedModelViewSet):
-    queryset = MenuCategory.objects.all()
+    queryset = MenuCategory.objects.select_related("restaurant")
     serializer_class = MenuCategorySerializer
-    model_name = 'MenuCategory'
-    lookup_field = 'slug'
-    
+    model_name = "MenuCategory"
+    lookup_field = "slug"
+
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
+        # 1️⃣ Superuser → all
         if user.is_superuser:
             return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
 
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
+        role_name = role.name.lower()
 
+        # 2️⃣ Admin → own restaurant
+        if role_name == "admin":
+            return qs.filter(restaurant__owner=user)
+
+        # 3️⃣ Staff → assigned restaurant
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                return qs.filter(
+                    restaurant=user.staff_profile.restaurant
+                )
+            return qs.none()
+
+        # 4️⃣ Customer → only open restaurants
+        if role_name == "customer":
+            return qs.filter(
+                restaurant__status="open"
+            )
+
+        # 5️⃣ Others → nothing
         return qs.none()
 
 
+
 class MenuItemViewSet(ProtectedModelViewSet):
-    queryset = MenuItem.objects.all()
+    queryset = MenuItem.objects.select_related(
+        "category",
+        "category__restaurant"
+    )
     serializer_class = MenuItemSerializer
-    model_name = 'MenuItem'
-    lookup_field = 'slug'
-    
-    
+    model_name = "MenuItem"
+    lookup_field = "slug"
 
-
-class TableViewSet(ProtectedModelViewSet):
-    queryset = Table.objects.all()
-    serializer_class = TableSerializer
-    model_name = 'Table'
-    lookup_field = 'slug'
-    
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
+        # 1️⃣ Superuser → all menu items
         if user.is_superuser:
             return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel__owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
 
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
+        role_name = role.name.lower()
 
+        # 2️⃣ Admin → own restaurant only
+        if role_name == "admin":
+            return qs.filter(
+                category__restaurant__owner=user
+            )
+
+        # 3️⃣ Staff → assigned restaurant only
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                return qs.filter(
+                    category__restaurant=user.staff_profile.restaurant
+                )
+            return qs.none()
+
+        # 4️⃣ Customer → open restaurants only
+        if role_name == "customer":
+            return qs.filter(
+                category__restaurant__status="open",
+                is_available=True  # optional if you have this field
+            )
+
+        # 5️⃣ Others → no access
+        return qs.none()
+
+    
+
+class TableViewSet(ProtectedModelViewSet):
+    queryset = Table.objects.select_related("restaurant")
+    serializer_class = TableSerializer
+    model_name = "Table"
+    lookup_field = "slug"
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        # 1️⃣ Superuser → all tables
+        if user.is_superuser:
+            return qs
+
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
+
+        role_name = role.name.lower()
+
+        # 2️⃣ Admin → own restaurant tables
+        if role_name == "admin":
+            return qs.filter(
+                restaurant__owner=user
+            )
+
+        # 3️⃣ Staff → assigned restaurant tables
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                return qs.filter(
+                    restaurant=user.staff_profile.restaurant
+                )
+            return qs.none()
+
+        # 4️⃣ Customer → tables of open restaurants
+        if role_name == "customer":
+            qs = qs.filter(
+                restaurant__status="open"
+            )
+
+            # Optional: only show available tables
+            status_param = self.request.query_params.get("status")
+            if status_param:
+                qs = qs.filter(status=status_param)
+
+            return qs
+
+        # 5️⃣ Others → no access
         return qs.none()
 
 
 class RestaurantOrderViewSet(ProtectedModelViewSet):
-    queryset = RestaurantOrder.objects.all().select_related('table', 'hotel')
+    queryset = RestaurantOrder.objects.select_related(
+        "restaurant",
+        "table"
+    )
     serializer_class = RestaurantOrderSerializer
-    model_name = 'RestaurantOrder'
-    lookup_field = 'slug'
-    
+    model_name = "RestaurantOrder"
+    lookup_field = "slug"
+
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
 
-        # ✅ Superuser: Full access
+        # 1️⃣ Superuser → all orders
         if user.is_superuser:
-            return RestaurantOrder.objects.all().select_related('hotel', 'table')
+            return qs
 
-        # ✅ Hotel Admin (assigned hotel)
-        hotel = getattr(user, 'hotel', None) or getattr(user, 'hotel_profile', None)
-        if hotel:
-            hotel_obj = getattr(hotel, 'hotel', hotel)
-            return RestaurantOrder.objects.filter(hotel=hotel_obj).select_related('hotel', 'table')
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
 
-        # ✅ Staff assigned to a hotel
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return RestaurantOrder.objects.filter(hotel=user.staff_profile.hotel).select_related('hotel', 'table')
+        role_name = role.name.lower()
 
-        # ✅ Others
-        return RestaurantOrder.objects.none()
+        # 2️⃣ Admin → own restaurant orders
+        if role_name == "admin":
+            return qs.filter(
+                restaurant__owner=user
+            )
+
+        # 3️⃣ Staff → assigned restaurant orders
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                return qs.filter(
+                    restaurant=user.staff_profile.restaurant
+                )
+            return qs.none()
+
+        # 4️⃣ Customer → only their orders
+        # (assuming guest_phone maps to user.phone)
+        if role_name == "customer":
+            return qs.filter(
+                guest_phone=user.phone
+            )
+
+        # 5️⃣ Others → no access
+        return qs.none()
+
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -228,25 +342,65 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
         })
 
     
-    @action(detail=False, methods=['get'], url_path='summary')
+    @action(detail=False, methods=["get"], url_path="summary")
     def order_summary(self, request):
         user = request.user
         queryset = RestaurantOrder.objects.all()
 
-        # ✅ Restrict data visibility based on user role
-        if not user.is_superuser:
-            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-                queryset = queryset.filter(hotel__owner=user)
-            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-                queryset = queryset.filter(hotel=user.staff_profile.hotel)
-            else:
-                queryset = queryset.none()
+        # -----------------------------------
+        # ROLE-BASED DATA SCOPING
+        # -----------------------------------
 
-        # ✅ Compute order summary counts
+        # Superuser → all orders
+        if user.is_superuser:
+            pass
+
+        else:
+            role = getattr(user, "role", None)
+            if not role:
+                queryset = queryset.none()
+            else:
+                role_name = role.name.lower()
+
+                # Admin → own restaurant
+                if role_name == "admin":
+                    queryset = queryset.filter(
+                        restaurant__owner=user
+                    )
+
+                # Staff → assigned restaurant
+                elif role_name == "staff":
+                    if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                        queryset = queryset.filter(
+                            restaurant=user.staff_profile.restaurant
+                        )
+                    else:
+                        queryset = queryset.none()
+
+                # Customer → their own orders
+                elif role_name == "customer":
+                    queryset = queryset.filter(
+                        guest_phone=user.phone
+                    )
+
+                # Others → no access
+                else:
+                    queryset = queryset.none()
+
+        # -----------------------------------
+        # SUMMARY COUNTS
+        # -----------------------------------
+
         total_orders = queryset.count()
-        active_orders = queryset.filter(status__in=['pending', 'preparing']).count()
-        completed_orders = queryset.filter(status='completed').count()
-        cancelled_orders = queryset.filter(status='cancelled').count()
+        active_orders = queryset.filter(
+            status__in=["pending", "preparing"]
+        ).count()
+        completed_orders = queryset.filter(
+            status="completed"
+        ).count()
+        cancelled_orders = queryset.filter(
+            status="cancelled"
+        ).count()
 
         return Response({
             "total_orders": total_orders,
@@ -254,6 +408,7 @@ class RestaurantOrderViewSet(ProtectedModelViewSet):
             "completed_orders": completed_orders,
             "cancelled_orders": cancelled_orders,
         })
+
 
 
 class OrderItemViewSet(ProtectedModelViewSet):
@@ -286,114 +441,187 @@ class RestaurantDashboardViewSet(ProtectedModelViewSet):
             return RestaurantDashboardSerializer
         return RestaurantDashboardSerializer
 
-    @action(detail=False, methods=['get'], url_path='dashboard-summary')
+    @action(detail=False, methods=["get"], url_path="dashboard-summary")
     def dashboard_summary(self, request):
         user = request.user
-        hotel_id = request.query_params.get('hotel')
+        restaurant_slug = request.query_params.get("restaurant")
 
         # Base QuerySets
-        tables = Table.objects.all()
-        orders = RestaurantOrder.objects.all()
+        tables = Table.objects.select_related("restaurant")
+        orders = RestaurantOrder.objects.select_related("restaurant")
 
-        # ✅ Role-Based Filtering
-        if not user.is_superuser:
-            if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-                tables = tables.filter(hotel__owner=user)
-                orders = orders.filter(hotel__owner=user)
+        # -----------------------------------
+        # ROLE-BASED DATA SCOPING
+        # -----------------------------------
 
-            elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-                hotel = user.staff_profile.hotel
-                tables = tables.filter(hotel=hotel)
-                orders = orders.filter(hotel=hotel)
+        if user.is_superuser:
+            pass
+
+        else:
+            role = getattr(user, "role", None)
+            if not role:
+                return Response(
+                    {"error": "Unauthorized access."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            role_name = role.name.lower()
+
+            # Admin → own restaurant
+            if role_name == "admin":
+                tables = tables.filter(
+                    restaurant__owner=user
+                )
+                orders = orders.filter(
+                    restaurant__owner=user
+                )
+
+            # Staff → assigned restaurant
+            elif role_name == "staff":
+                if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                    restaurant = user.staff_profile.restaurant
+                    tables = tables.filter(restaurant=restaurant)
+                    orders = orders.filter(restaurant=restaurant)
+                else:
+                    return Response(
+                        {"error": "Staff not linked to any restaurant."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+            # Customer → no dashboard
+            elif role_name == "customer":
+                return Response(
+                    {"error": "Dashboard not available for customers."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
             else:
                 return Response(
-                    {"error": "You are not associated with any hotel."},
-                    status=403
+                    {"error": "Unauthorized role."},
+                    status=status.HTTP_403_FORBIDDEN
                 )
 
-        # ✅ Optional Manual Filter
-        if hotel_id:
-            tables = tables.filter(hotel_id=hotel_id)
-            orders = orders.filter(hotel_id=hotel_id)
+        # -----------------------------------
+        # OPTIONAL RESTAURANT FILTER (slug)
+        # -----------------------------------
+        if restaurant_slug:
+            tables = tables.filter(
+                restaurant__slug=restaurant_slug
+            )
+            orders = orders.filter(
+                restaurant__slug=restaurant_slug
+            )
 
-        # ✅ 1. Available Tables
-        available_tables = tables.filter(status='available').count()
+        # -----------------------------------
+        # DASHBOARD METRICS
+        # -----------------------------------
 
-        # ✅ 2. Active Orders
+        # 1️⃣ Available tables
+        available_tables = tables.filter(
+            status="available"
+        ).count()
+
+        # 2️⃣ Active orders (today)
         today = date.today()
         active_orders = orders.filter(
             order_time__date=today,
-            status__in=['pending', 'preparing', 'served']
+            status__in=["pending", "preparing", "served"]
         ).count()
 
-        # ✅ 3. Today's Revenue (from order totals, not payments)
+        # 3️⃣ Today’s revenue
         todays_revenue = (
             orders.filter(
                 order_time__date=today,
-                status__in=['served', 'completed'],
-            ).aggregate(total=Sum('grand_total'))['total'] or 0
+                status__in=["served", "completed"]
+            ).aggregate(total=Sum("grand_total"))["total"] or 0
         )
 
-        # ✅ 4. Average Wait Time
+        # 4️⃣ Average wait time (completed orders)
         avg_wait_minutes = 0
         avg_expr = ExpressionWrapper(
-            F('completed_at') - F('order_time'),
+            F("completed_at") - F("order_time"),
             output_field=DurationField()
         )
+
         avg_wait_time = (
             orders.filter(
-                status='completed',
+                status="completed",
                 completed_at__isnull=False
-            ).aggregate(avg=Avg(avg_expr))['avg']
+            ).aggregate(avg=Avg(avg_expr))["avg"]
         )
-        if avg_wait_time:
-            avg_wait_minutes = round(avg_wait_time.total_seconds() / 60, 2)
 
-        # ✅ Final Response
+        if avg_wait_time:
+            avg_wait_minutes = round(
+                avg_wait_time.total_seconds() / 60, 2
+            )
+
+        # -----------------------------------
+        # RESPONSE
+        # -----------------------------------
         return Response({
             "available_tables": available_tables,
             "active_orders": active_orders,
             "todays_revenue": float(todays_revenue),
-            "avg_wait_time": f"{avg_wait_minutes} min"
+            "avg_wait_time": f"{avg_wait_minutes} min",
         })
+
 
         
         
 class TableReservationViewSet(ProtectedModelViewSet):
     """
     Manage Table Reservations.
-    - Superuser/Admin: full access to all reservations
-    - Staff: access limited to their hotel's tables
-    - Customers: only their own reservations (matched by email)
+    - Superuser: full access
+    - Admin: reservations of their restaurant
+    - Staff: reservations of assigned restaurant
+    - Customer: only their own reservations
     """
-    queryset = TableReservation.objects.all().order_by('-created_at')
+    queryset = TableReservation.objects.select_related(
+        "table",
+        "table__restaurant"
+    ).order_by("-created_at")
+
     serializer_class = TableReservationSerializer
-    model_name = 'TableReservation'  # required for RoleModelPermission mapping
+    model_name = "TableReservation"  # required for RoleModelPermission mapping
 
     def get_queryset(self):
         user = self.request.user
-        qs = TableReservation.objects.all().order_by('-created_at')
+        qs = super().get_queryset()
 
-        # 🔹 Superuser: full access
+        # 1️⃣ Superuser → all reservations
         if user.is_superuser:
             return qs
 
-        # 🔹 Admin (hotel owner): only their hotel's reservations
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(table__hotel__owner=user)
+        role = getattr(user, "role", None)
+        if not role:
+            return qs.none()
 
-        # 🔹 Staff: only reservations for their assigned hotel
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            hotel = user.staff_profile.hotel
-            return qs.filter(table__hotel=hotel)
+        role_name = role.name.lower()
 
-        # 🔹 Customers (regular users): only their own reservations
-        if user.is_authenticated and user.email:
-            return qs.filter(email=user.email)
+        # 2️⃣ Admin → own restaurant reservations
+        if role_name == "admin":
+            return qs.filter(
+                table__restaurant__owner=user
+            )
 
-        # 🔹 Otherwise: no access
+        # 3️⃣ Staff → assigned restaurant reservations
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.restaurant:
+                return qs.filter(
+                    table__restaurant=user.staff_profile.restaurant
+                )
+            return qs.none()
+
+        # 4️⃣ Customer → only their reservations
+        # (assuming reservation stores customer email)
+        if role_name == "customer":
+            return qs.filter(
+                email=user.email
+            )
+
+        # 5️⃣ Others → no access
         return qs.none()
+
 
     
 class BookingCallbackView(generics.CreateAPIView):
