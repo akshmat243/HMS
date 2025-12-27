@@ -192,7 +192,19 @@ class GuestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Guest
-        exclude = ['booking']  # or: read_only_fields = ['booking']
+        fields = [
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "address",
+            "gender",
+            "id_proof_type",
+            "id_proof_number",
+            "id_proof_file",
+            "special_request",
+            "age",
+        ]
         read_only_fields = ['slug', 'created_at']
 
     def get_age(self, obj):
@@ -227,6 +239,12 @@ class BookingSerializer(serializers.ModelSerializer):
         check_in = data.get('check_in', self.instance.check_in if self.instance else None)
         check_out = data.get('check_out', self.instance.check_out if self.instance else None)
         room = data.get('room', self.instance.room if self.instance else None)
+        
+        guests = data.get("guests", [])
+        if data.get("guests_count") != len(guests):
+            raise serializers.ValidationError(
+                "Guests count does not match guests provided."
+            )
 
         # ✅ Check date order
         if check_in and check_out and check_in >= check_out:
