@@ -10,6 +10,7 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = '__all__'
+        read_only_fields = ['user', 'admin', 'slug']
 
     def validate_name(self, value):
         if len(value.strip()) < 3:

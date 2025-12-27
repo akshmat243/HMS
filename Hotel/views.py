@@ -32,15 +32,22 @@ class HotelViewSet(ProtectedModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # ✅ Superuser can see all hotels
+        # 1. Superuser: Sees everything
         if user.is_superuser:
             return Hotel.objects.all()
 
-        # ✅ Admins can see only their own hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return Hotel.objects.filter(owner=user)
+        if hasattr(user, 'role'):
+            role_name = user.role.name.lower()
+            
+            # 2. Admin & Vendor: Only their own hotel
+            if role_name in ['admin', 'vendor']:
+                return Hotel.objects.filter(owner=user)
+            
+            # 3. Customer: Sees all available hotels
+            if role_name == 'customer':
+                return Hotel.objects.filter(status='available')
 
-        # ✅ Staff can see their hotel (if linked)
+        # 4. Staff: Their linked hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
@@ -803,21 +810,27 @@ class RoomViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
 
-        # Superuser → sees all rooms
+        # 1. Superuser: Sees everything
         if user.is_superuser:
-            return qs
+            return Hotel.objects.all()
 
-        # Admin → rooms only from their hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel=user.hotel)
+        if hasattr(user, 'role'):
+            role_name = user.role.name.lower()
+            
+            # 2. Admin & Vendor: Only their own hotel
+            if role_name in ['admin', 'vendor']:
+                return Hotel.objects.filter(owner=user)
+            
+            # 3. Customer: Sees all available hotels
+            if role_name == 'customer':
+                return Hotel.objects.filter(status='available')
 
-        # Staff → rooms only from their hotel
+        # 4. Staff: Their linked hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
+            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
-        return qs.none()
+        return Hotel.objects.none()
 
 
     def perform_create(self, serializer):
