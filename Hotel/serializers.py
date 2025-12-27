@@ -203,6 +203,7 @@ class GuestSerializer(serializers.ModelSerializer):
             "id_proof_number",
             "id_proof_file",
             "special_request",
+            "age"
         ]
         read_only_fields = ['slug', 'created_at']
 
@@ -230,6 +231,12 @@ class BookingSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True,
         allow_empty=True
+    )
+    
+    guests_data = GuestSerializer(
+        many=True,
+        read_only=True,
+        source="guests"
     )
 
     room_number = serializers.CharField(source="room.room_number", read_only=True)
