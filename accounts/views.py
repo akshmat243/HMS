@@ -180,15 +180,9 @@ class VerifyEmailAndResetPasswordAPIView(APIView):
     def post(self, request, slug):
         user = get_object_or_404(User, slug=slug)
 
-        # optional safety check
-        if user.is_email_verified:
-            return Response(
-                {"detail": "Email already verified."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         serializer = VerifyEmailAndResetPasswordSerializer(
-            data=request.data
+            data=request.data,
+            context={"user": user}
         )
         serializer.is_valid(raise_exception=True)
         serializer.save(user=user)
@@ -197,6 +191,7 @@ class VerifyEmailAndResetPasswordAPIView(APIView):
             {"message": "Email verified and password reset successfully."},
             status=status.HTTP_200_OK
         )
+
 
 
 

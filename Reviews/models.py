@@ -4,6 +4,7 @@ from django.utils.text import slugify
 from django.contrib.auth import get_user_model
 from Hotel.models import Hotel
 from Restaurant.models import MenuItem
+from staff.models import Staff
 
 User = get_user_model()
 
@@ -53,6 +54,7 @@ class ServiceReview(models.Model):
         ('laundry', 'Laundry'),
         ('room_service', 'Room Service'),
         ('spa', 'Spa'),
+        ('House keeping', 'house keeping'),
         ('others', 'Others'),
     ]
 
@@ -74,3 +76,28 @@ class ServiceReview(models.Model):
 
     def __str__(self):
         return f"{self.service_type.title()} Review ({self.rating}⭐)"
+
+class StaffReview(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True, blank=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='staff_reviews_given')
+    
+    # Direct Link to Staff Model
+    staff_member = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='reviews')
+    
+    rating = models.PositiveIntegerField(default=5)
+    comment = models.TextField(blank=True)
+    date = models.DateTimeField(auto_now_add=True)
+    reply = models.TextField(blank=True, null=True, help_text="Admin/Staff reply")
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            # Slug format: staff-name-userid-uuid
+            staff_name = self.staff_member.user.full_name if self.staff_member.user else "staff"
+            base = f"staff-{staff_name}-{self.user.id}-{uuid.uuid4().hex[:6]}"
+            self.slug = slugify(base)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        name = self.staff_member.user.full_name if self.staff_member.user else "Unknown Staff"
+        return f"Review for {name} ({self.rating}⭐)"
