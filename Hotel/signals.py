@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import User, UserModule
+from accounts.models import User, UserModule
 from Hotel.models import Hotel
 from Restaurant.models import Restaurant
 

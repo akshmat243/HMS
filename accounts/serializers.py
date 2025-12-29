@@ -55,10 +55,10 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "email", "full_name", "slug", "phone",
-            "password", "role_slug", "role_name",
+            "password", "role_slug", "role_name", "modules",
             "is_active", "date_joined", "created_by"
         ]
-        read_only_fields = ["id", "date_joined", "created_by", "role_name"]
+        read_only_fields = ["id", "date_joined", "created_by", "role_name", "modules"]
 
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
