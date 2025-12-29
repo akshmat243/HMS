@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from MBP.models import Role
+from .models import UserModule
+from django.utils.crypto import get_random_string
+from .signals import user_created_with_password
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -42,16 +45,22 @@ class UserSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(write_only=True, required=False)
 
+    modules = serializers.ListField(
+        child=serializers.ChoiceField(choices=["hotel", "restaurant"]),
+        write_only=True,
+        required=False
+    )
+    
     created_by = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
         fields = [
             "id", "email", "full_name", "slug", "phone",
-            "password", "role_slug", "role_name",
+            "password", "role_slug", "role_name", "modules",
             "is_active", "date_joined", "created_by"
         ]
-        read_only_fields = ["id", "date_joined", "created_by", "role_name"]
+        read_only_fields = ["id", "date_joined", "created_by", "role_name", "modules"]
 
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
@@ -62,6 +71,8 @@ class UserSerializer(serializers.ModelSerializer):
 
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
+        modules = validated_data.pop("modules", []) 
+        # raw_password = get_random_string(10) if not password else password
 
         role = None
         if role_slug:
@@ -76,17 +87,33 @@ class UserSerializer(serializers.ModelSerializer):
 
         if password:
             user.set_password(password)
+        user.force_password_change = True
+        user.is_email_verified = False
 
         if role:
             user.role = role
+        user.is_active = True
 
         user.save()
+        
+        for module in modules:
+            UserModule.objects.create(user=user, module=module)
+        
+        raw_password = password  # Store raw password for signal
+        
+        user_created_with_password.send(
+            sender=User,
+            user=user,
+            raw_password=raw_password
+        )
+                
         return user
 
     def update(self, instance, validated_data):
 
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
+        modules = validated_data.pop("modules", None) 
 
         # Update all normal fields including is_active
         for attr, value in validated_data.items():
@@ -105,6 +132,14 @@ class UserSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
         instance.save()
+        
+
+        for module in modules:
+            UserModule.objects.create(
+                user=instance,
+                module=module
+            )
+                
         return instance
 
 class VerifyEmailAndResetPasswordSerializer(serializers.Serializer):

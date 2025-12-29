@@ -192,7 +192,19 @@ class GuestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Guest
-        exclude = ['booking']  # or: read_only_fields = ['booking']
+        fields = [
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "address",
+            "gender",
+            "id_proof_type",
+            "id_proof_number",
+            "id_proof_file",
+            "special_request",
+            "age"
+        ]
         read_only_fields = ['slug', 'created_at']
 
     def get_age(self, obj):
@@ -215,7 +227,18 @@ class BookingSerializer(serializers.ModelSerializer):
         queryset=Room.objects.all()
     )
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    guests = GuestSerializer(many=True, required=True)
+    guests = serializers.ListField(
+        write_only=True,
+        required=True,
+        allow_empty=True
+    )
+    
+    guests_data = GuestSerializer(
+        many=True,
+        read_only=True,
+        source="guests"
+    )
+
     room_number = serializers.CharField(source="room.room_number", read_only=True)
 
     class Meta:
@@ -227,6 +250,12 @@ class BookingSerializer(serializers.ModelSerializer):
         check_in = data.get('check_in', self.instance.check_in if self.instance else None)
         check_out = data.get('check_out', self.instance.check_out if self.instance else None)
         room = data.get('room', self.instance.room if self.instance else None)
+        
+        guests = data.get("guests", [])
+        if data.get("guests_count") != len(guests):
+            raise serializers.ValidationError(
+                "Guests count does not match guests provided."
+            )
 
         # ✅ Check date order
         if check_in and check_out and check_in >= check_out:
@@ -246,14 +275,40 @@ class BookingSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        guests_data = validated_data.pop('guests', [])
-        booking = Booking.objects.create(**validated_data)
-        room = booking.room
-        room.status = "reserved"
-        room.save()
+        request = self.context["request"]
 
-        for guest in guests_data:
-            Guest.objects.create(booking=booking, **guest)
+        # remove guests from DRF flow
+        validated_data.pop("guests", None)
+
+        booking = Booking.objects.create(**validated_data)
+
+        # reserve room
+        booking.room.status = "reserved"
+        booking.room.save()
+
+        # ----------------------------
+        # MANUAL GUEST PARSING
+        # ----------------------------
+        index = 0
+        while True:
+            prefix = f"guests[{index}]"
+            if f"{prefix}[first_name]" not in request.data:
+                break
+
+            Guest.objects.create(
+                booking=booking,
+                first_name=request.data.get(f"{prefix}[first_name]"),
+                last_name=request.data.get(f"{prefix}[last_name]"),
+                email=request.data.get(f"{prefix}[email]"),
+                phone=request.data.get(f"{prefix}[phone]"),
+                gender=request.data.get(f"{prefix}[gender]"),
+                id_proof_type=request.data.get(f"{prefix}[id_proof_type]"),
+                id_proof_number=request.data.get(f"{prefix}[id_proof_number]"),
+                id_proof_file=request.FILES.get(f"{prefix}[id_proof_file]"),
+                special_request=request.data.get(f"{prefix}[special_request]"),
+            )
+
+            index += 1
             
         # ✅ Auto-generate invoice for this booking
         content_type = ContentType.objects.get_for_model(Booking)

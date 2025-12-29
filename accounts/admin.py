@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from accounts.models import Profile
+from accounts.models import Profile, UserModule
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -36,3 +36,9 @@ class ProfileAdmin(admin.ModelAdmin):
     search_fields = ('user__full_name', 'phone', 'gender')
     list_filter = ('gender',)
     readonly_fields = ('slug',)
+
+@admin.register(UserModule)
+class UserModuleAdmin(admin.ModelAdmin):
+    list_display = ("user", "module", "is_active")
+    list_filter = ("module", "is_active")
+    search_fields = ("user__email",)
