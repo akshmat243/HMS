@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from MBP.models import Role
 from .models import UserModule
+from django.utils.crypto import get_random_string
+from .signals import user_created_with_password
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -70,6 +72,7 @@ class UserSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
         modules = validated_data.pop("modules", []) 
+        # raw_password = get_random_string(10) if not password else password
 
         role = None
         if role_slug:
@@ -84,18 +87,25 @@ class UserSerializer(serializers.ModelSerializer):
 
         if password:
             user.set_password(password)
+        user.force_password_change = True
+        user.is_email_verified = False
 
         if role:
             user.role = role
+        user.is_active = True
 
         user.save()
         
-        if role and role.name.lower() == "admin":
-            for module in modules:
-                UserModule.objects.get_or_create(
-                    user=user,
-                    module=module
-                )
+        for module in modules:
+            UserModule.objects.create(user=user, module=module)
+        
+        raw_password = password  # Store raw password for signal
+        
+        user_created_with_password.send(
+            sender=User,
+            user=user,
+            raw_password=raw_password
+        )
                 
         return user
 
@@ -123,13 +133,12 @@ class UserSerializer(serializers.ModelSerializer):
 
         instance.save()
         
-        if modules is not None and instance.role and instance.role.name.lower() == "admin":
-            instance.modules.all().delete()
-            for module in modules:
-                UserModule.objects.create(
-                    user=instance,
-                    module=module
-                )
+
+        for module in modules:
+            UserModule.objects.create(
+                user=instance,
+                module=module
+            )
                 
         return instance
 

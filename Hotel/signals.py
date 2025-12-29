@@ -35,7 +35,8 @@ def create_admin_business_units(sender, instance, created, **kwargs):
         Restaurant.objects.get_or_create(
             owner=instance,
             defaults={
-                "name": f"{instance.full_name}'s Restaurant"
+                "name": f"{instance.full_name}'s Restaurant",
+                "rating": 5.0
             }
         )
 
