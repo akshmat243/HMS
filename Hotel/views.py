@@ -54,7 +54,7 @@ class HotelViewSet(ProtectedModelViewSet):
             return Hotel.objects.filter(status='available')
 
 
-        # ✅ Staff can see their hotel (if linked)
+        # 4. Staff: Their linked hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
             return Hotel.objects.filter(id=user.staff_profile.hotel.id)
           
@@ -826,11 +826,10 @@ class RoomViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
 
-        # Superuser → sees all rooms
+        # 1. Superuser: Sees everything
         if user.is_superuser:
-            return qs
+            return Hotel.objects.all()
 
         # Admin → rooms only from their hotel
         if hasattr(user, 'role') and user.role.name.lower() == 'admin':
@@ -854,9 +853,9 @@ class RoomViewSet(ProtectedModelViewSet):
             return qs
         # Staff → rooms only from their hotel
         if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return qs.filter(hotel=user.staff_profile.hotel)
+            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
-        return qs.none()
+        return Hotel.objects.none()
 
 
     def perform_create(self, serializer):
