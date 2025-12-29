@@ -85,3 +85,17 @@ class Profile(models.Model):
 
     def __str__(self):
         return self.user.full_name
+
+
+class UserModule(models.Model):
+    MODULE_CHOICES = [
+        ("hotel", "Hotel"),
+        ("restaurant", "Restaurant"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="modules")
+    module = models.CharField(max_length=20, choices=MODULE_CHOICES)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("user", "module")

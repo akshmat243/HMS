@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from MBP.models import Role
+from .models import UserModule
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -42,6 +43,12 @@ class UserSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(write_only=True, required=False)
 
+    modules = serializers.ListField(
+        child=serializers.ChoiceField(choices=["hotel", "restaurant"]),
+        write_only=True,
+        required=False
+    )
+    
     created_by = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -62,6 +69,7 @@ class UserSerializer(serializers.ModelSerializer):
 
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
+        modules = validated_data.pop("modules", []) 
 
         role = None
         if role_slug:
@@ -81,12 +89,21 @@ class UserSerializer(serializers.ModelSerializer):
             user.role = role
 
         user.save()
+        
+        if role and role.name.lower() == "admin":
+            for module in modules:
+                UserModule.objects.get_or_create(
+                    user=user,
+                    module=module
+                )
+                
         return user
 
     def update(self, instance, validated_data):
 
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
+        modules = validated_data.pop("modules", None) 
 
         # Update all normal fields including is_active
         for attr, value in validated_data.items():
@@ -105,6 +122,15 @@ class UserSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"role_slug": "Invalid role slug."})
 
         instance.save()
+        
+        if modules is not None and instance.role and instance.role.name.lower() == "admin":
+            instance.modules.all().delete()
+            for module in modules:
+                UserModule.objects.create(
+                    user=instance,
+                    module=module
+                )
+                
         return instance
 
 class VerifyEmailAndResetPasswordSerializer(serializers.Serializer):
