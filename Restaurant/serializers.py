@@ -19,7 +19,7 @@ class RestaurantSerializer(serializers.ModelSerializer):
         model = Restaurant
         fields = [
             'id', 'slug', 'name', 'description', 'address', 'city', 'state', 'country',
-            'pincode', 'contact_number', 'email', 'logo', 'cover_image', 'status',
+            'pincode', 'contact_number', 'email', 'logo', 'cover_image', 'status', 'rating',
             'owner_slug', 'owner_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['slug', 'created_at', 'updated_at']
