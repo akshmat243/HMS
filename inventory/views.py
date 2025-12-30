@@ -24,15 +24,22 @@ class SupplierView(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
-    # agar role admin hai, sirf uska hi data dikhao
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
-
-    # agar superuser hai to sab dikhao
         if user.is_superuser:
             return qs
 
-    # kisi aur role ke liye kuch nahi
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
         return qs.none()
 
 
@@ -49,15 +56,22 @@ class InventoryCategoryView(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
-    # agar role admin hai, sirf uska hi data dikhao
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
-
-    # agar superuser hai to sab dikhao
         if user.is_superuser:
             return qs
 
-    # kisi aur role ke liye kuch nahi
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
         return qs.none()
 
 class InventoryItemView(ProtectedModelViewSet):
@@ -73,15 +87,22 @@ class InventoryItemView(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
-    # agar role admin hai, sirf uska hi data dikhao
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
-
-    # agar superuser hai to sab dikhao
         if user.is_superuser:
             return qs
 
-    # kisi aur role ke liye kuch nahi
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
         return qs.none()
 
 class PurchaseOrderView(ProtectedModelViewSet):
@@ -96,12 +117,25 @@ class PurchaseOrderView(ProtectedModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
-            return qs.filter(admin=user)
+
         if user.is_superuser:
             return qs
-        return qs.none()
 
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
+        return qs.none()
+    
 # class PurchaseOrderItemView(ProtectedModelViewSet):
 #     queryset = PurchaseOrderItem.objects.all()
 #     serializer_class = PurchaseOrderItemSerializer

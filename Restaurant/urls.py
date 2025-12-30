@@ -2,8 +2,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     MenuCategoryViewSet, MenuItemViewSet, TableViewSet,
-    RestaurantOrderViewSet, OrderItemViewSet, RestaurantDashboardViewSet, TableReservationViewSet,RestaurantViewSet,BookingCallbackView,PublicTableSearchView
-)
+    RestaurantOrderViewSet, OrderItemViewSet, RestaurantDashboardViewSet, TableReservationViewSet,RestaurantViewSet,BookingCallbackView,PublicTableSearchView )
+
 
 router = DefaultRouter()
 router.register('restaurants',RestaurantViewSet)

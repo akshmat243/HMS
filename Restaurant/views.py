@@ -25,23 +25,50 @@ class RestaurantViewSet(ProtectedModelViewSet):
     serializer_class = RestaurantSerializer
     model_name = 'Restaurant'
     lookup_field = 'slug'
-    
+
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
 
-        # ✅ Superuser can see all Restaurants
+        # ✅ Superuser → all restaurants
         if user.is_superuser:
-            return Restaurant.objects.all()
+            return qs
 
-        # ✅ Admins can see only their own Restaurant
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return Restaurant.objects.filter(owner=user)
+        # ✅ Admin → only their own restaurant
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+            return qs.filter(owner=user)
 
-        # ✅ Staff can see their Restaurant (if linked)
-        if hasattr(user, 'staff_profile') and user.staff_profile.Restaurant:
-            return Restaurant.objects.filter(id=user.staff_profile.Restaurant.id)
+        # ✅ Staff → only assigned restaurant
+        if hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'restaurant', None):
+            return qs.filter(id=user.staff_profile.restaurant.id)
 
-        return Restaurant.objects.none()
+        # ✅ Vendor → restaurants linked to vendor
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'vendor':
+            return qs.filter(vendors__user=user)
+
+        # ✅ Customer → only OPEN restaurants
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'customer':
+            return qs.filter(status='open')
+
+        # ❌ Others → no access
+        return qs.none()
+    
+    # def get_queryset(self):
+    #     user = self.request.user
+
+    #     # ✅ Superuser can see all Restaurants
+    #     if user.is_superuser:
+    #         return Restaurant.objects.all()
+
+    #     # ✅ Admins can see only their own Restaurant
+    #     if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+    #         return Restaurant.objects.filter(owner=user)
+
+    #     # ✅ Staff can see their Restaurant (if linked)
+    #     if hasattr(user, 'staff_profile') and user.staff_profile.Restaurant:
+    #         return Restaurant.objects.filter(id=user.staff_profile.Restaurant.id)
+
+    #     return Restaurant.objects.none()
     
     @action(detail=False, methods=['get'], url_path='stats')
     def Restaurant_stats(self, request):
@@ -654,12 +681,11 @@ class PublicTableSearchView(generics.ListAPIView):
         if city_query:
             queryset = queryset.filter(hotel__city__icontains=city_query)
 
-        # 2. People Filter (Table Capacity ke hisaab se)
-        # Agar user 4 logo ke liye table dhund rha h, to capacity >= 4 honi chahiye
+        # 2. People Filter 
         if people_count:
             try:
                 queryset = queryset.filter(capacity__gte=int(people_count))
             except ValueError:
-                pass # Agar user ne number nahi bheja to ignore karo
+                pass 
 
         return queryset

@@ -3,6 +3,8 @@ from django.utils.text import slugify
 from datetime import date
 import uuid
 from django.conf import settings
+from Hotel.models import Hotel
+from Restaurant.models import Restaurant
 
 class Supplier(models.Model):
     slug = models.SlugField(unique=True, blank=True)
@@ -17,6 +19,8 @@ class Supplier(models.Model):
         blank=True, 
         related_name='supplier_profile'
     )
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='supplier')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
 
     admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='supplier_admin', null=True,
     blank=True)
@@ -43,6 +47,8 @@ class InventoryCategory(models.Model):
     slug = models.SlugField(unique=True, blank=True)
     admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='inventory_admin', null=True,
     blank=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='inventory')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='inventory_restaurant')
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -81,6 +87,8 @@ class InventoryItem(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="good")
     admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='item_admin', null=True,
     blank=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='item_hotel')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='item_restaurant')
 
     def save(self, *args, **kwargs):
         # Auto-calculate total value
@@ -123,6 +131,8 @@ class PurchaseOrder(models.Model):
     status = models.CharField(max_length=50, default="Pending")
     admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='purchase_admin', null=True,
     blank=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='order_hotel')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='order_restaurant')
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -142,6 +152,8 @@ class PurchaseOrderItem(models.Model):
     slug = models.SlugField(unique=True, blank=True)
     admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='purchase_item_admin', null=True,
     blank=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='order_item')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='order_item_restaurant')
 
     def save(self, *args, **kwargs):
         if not self.slug:
