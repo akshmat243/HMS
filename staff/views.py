@@ -8,37 +8,51 @@ from django.utils import timezone
 from rest_framework import status
 from django.db.models import Count, Q, F, Avg, Sum
 from django.db import transaction
+from Hotel.models import Hotel
+from Restaurant.models import Restaurant
 
 class StaffDocumentViewSet(ProtectedModelViewSet):
-    queryset = StaffDocument.objects.select_related("staff", "staff__hotel", "staff__user").all()
+    queryset = StaffDocument.objects.select_related(
+        "staff", "staff__hotel", "staff__restaurant", "staff__user"
+    )
     serializer_class = StaffDocumentSerializer
     lookup_field = "id"
 
     def get_queryset(self):
-        qs = super().get_queryset()
         user = self.request.user
-    
+        qs = super().get_queryset()
+
+        # 1️⃣ Superuser → all documents
         if user.is_superuser:
-                pass
-        
-        elif hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
-            if not hasattr(user, "hotel") or not user.hotel:
-                return qs.none()
+            return qs
 
-            qs = qs.filter(staff__hotel=user.hotel)
-
-
-        elif hasattr(user, "staff_profile"):
-            qs = qs.filter(staff=user.staff_profile)
-
-        else:
+        role = getattr(user, "role", None)
+        if not role:
             return qs.none()
 
-        staff_slug = self.request.query_params.get("staff")
-        if staff_slug:
-            qs = qs.filter(staff__slug=staff_slug)
+        role_name = role.name.lower()
 
-        return qs
+        # 2️⃣ Admin → staff documents of their hotel OR restaurant
+        if role_name == "admin":
+            # Hotel admin
+            hotel = Hotel.objects.filter(owner=user).first()
+            if hotel:
+                qs = qs.filter(staff__hotel=hotel)
+
+            # Restaurant admin
+            restaurant = Restaurant.objects.filter(owner=user).first()
+            if restaurant:
+                qs = qs.filter(staff__restaurant=restaurant)
+
+            return qs
+
+        # 3️⃣ Staff → only their own documents
+        if role_name == "staff" and hasattr(user, "staff_profile"):
+            return qs.filter(staff=user.staff_profile)
+
+        # 4️⃣ Others → no access
+        return qs.none()
+
         
 
 class StaffViewSet(ProtectedModelViewSet):
@@ -56,27 +70,40 @@ class StaffViewSet(ProtectedModelViewSet):
     lookup_field = 'slug'
 
     def get_queryset(self):
-        """Filter queryset based on user role."""
         user = self.request.user
+        qs = Staff.objects.all().select_related("user", "hotel", "restaurant")
 
-        # 1️⃣ Superuser → All staff
+        # 1️⃣ Superuser → all staff
         if user.is_superuser:
-            return Staff.objects.all()
+            return qs
 
-        # 2️⃣ Admin → Only staff in their hotel
-        if hasattr(user, "role") and user.role.name.lower() == "admin":
-            hotel = getattr(user, "hotel", None) or getattr(
-                getattr(user, "staff_profile", None), "hotel", None
-            )
-            if hotel:
-                return Staff.objects.filter(hotel=hotel)
+        role = getattr(user, "role", None)
+        if not role:
             return Staff.objects.none()
 
-        # 3️⃣ Staff → Only their own record
-        if hasattr(user, "role") and user.role.name.lower() == "staff":
-            return Staff.objects.filter(user=user)
+        role_name = role.name.lower()
 
+        # 2️⃣ Admin → staff of their hotel OR restaurant
+        if role_name == "admin":
+            # Hotel admin
+            hotel = Hotel.objects.filter(owner=user).first()
+            if hotel:
+                return qs.filter(hotel=hotel)
+
+            # Restaurant admin
+            restaurant = Restaurant.objects.filter(owner=user).first()
+            if restaurant:
+                return qs.filter(restaurant=restaurant)
+
+            return Staff.objects.none()
+
+        # 3️⃣ Staff → only their own profile
+        if role_name == "staff":
+            return qs.filter(user=user)
+
+        # 4️⃣ Others → no access
         return Staff.objects.none()
+
 
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
@@ -327,11 +354,6 @@ class LeaveViewSet(ProtectedModelViewSet):
         leave.approved_by = request.user
         leave.save(update_fields=['status', 'approved_by'])
         return Response({"message": "Leave rejected."})
-
-
-
-
-
 
 
 

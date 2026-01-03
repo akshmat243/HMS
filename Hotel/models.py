@@ -137,8 +137,8 @@ class Room(models.Model):
     def save(self, *args, **kwargs):
 
         previous_status = None
-        if self.pk:
-            previous_status = Room.objects.filter(pk=self.pk).first().status
+        if not self._state.adding:
+            previous_status = Room.objects.get(pk=self.pk).status
 
         with transaction.atomic():
             if not self.room_number and not self.pk:
