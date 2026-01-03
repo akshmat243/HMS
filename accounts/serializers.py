@@ -2,7 +2,7 @@ from rest_framework import serializers
 from MBP.models import Role
 from .models import UserModule
 from django.utils.crypto import get_random_string
-from .signals import user_created_with_password
+from .signals import user_created_with_password, user_registered
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -35,6 +35,11 @@ class RegisterUserSerializer(serializers.ModelSerializer):
         user.role = Role.objects.get_or_create(name="Customer")[0]
         user.created_by = None
         user.save()
+        
+        user_registered.send(
+            sender=User,
+            user=user
+        )
         return user
 
 

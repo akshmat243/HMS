@@ -44,8 +44,14 @@ class HotelSerializer(serializers.ModelSerializer):
             request = self.context['request']
             if not request.user.is_superuser:
                 raise serializers.ValidationError({'owner_slug': 'You cannot change hotel admin.'})
-            owner_slug = validated_data.pop('owner_slug')
+            
+        owner_slug = validated_data.pop('owner_slug')
+        try:
             instance.owner = User.objects.get(slug=owner_slug)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                'owner_slug': 'Invalid admin user slug.'
+            })
 
         return super().update(instance, validated_data)
 
@@ -162,8 +168,8 @@ class RoomCreateUpdateSerializer(RoomSerializer):
         user = request.user
 
         # Assign hotel for admin users
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            validated_data['hotel'] = getattr(user, 'hotel', None)
+        # if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+        #     validated_data['hotel'] = getattr(user, 'hotel', None)
 
         room = Room.objects.create(**validated_data)
 

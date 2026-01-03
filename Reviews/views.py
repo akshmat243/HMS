@@ -21,23 +21,41 @@ class HotelReviewViewSet(ProtectedModelViewSet):
     serializer_class = HotelReviewSerializer
     model_name = 'HotelReview'
     lookup_field = 'slug'
+    
     def get_queryset(self):
         user = self.request.user
+        qs = HotelReview.objects.all().select_related("hotel", "user")
 
-        # SUPERUSER → full access
+        # 1️⃣ Superuser → all reviews
         if user.is_superuser:
-            return HotelReview.objects.all().select_related("hotel", "user")
+            return qs
 
-        # HOTEL ADMIN
-        if hasattr(user, "hotel") and user.hotel:
-            return HotelReview.objects.filter(hotel=user.hotel).select_related("hotel", "user")
+        role = getattr(user, "role", None)
+        if not role:
+            return HotelReview.objects.none()
 
-        # STAFF → via staff_profile
-        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
-            return HotelReview.objects.filter(hotel=user.staff_profile.hotel).select_related("hotel", "user")
+        role_name = role.name.lower()
 
-        # DEFAULT → No Access
+        # 2️⃣ Hotel Admin → only reviews of their hotel
+        if role_name == "admin":
+            return qs.filter(hotel__owner=user)
+
+        # 3️⃣ Staff → reviews of assigned hotel
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+                return qs.filter(hotel=user.staff_profile.hotel)
+            return HotelReview.objects.none()
+
+        # 4️⃣ Customer → can read reviews (optional: filter by hotel via query param)
+        if role_name == "customer":
+            hotel_slug = self.request.query_params.get("hotel")
+            if hotel_slug:
+                return qs.filter(hotel__slug=hotel_slug)
+            return qs  # show all hotel reviews
+
+        # 5️⃣ Vendor / Others → no access
         return HotelReview.objects.none()
+
     
     #  ACTION: ADMIN REPLY 
     @action(detail=True, methods=['patch'], url_path='submit-reply')
@@ -386,23 +404,53 @@ class RestaurantReviewViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = RestaurantReview.objects.all().select_related(
+            "menu_item", "user", "menu_item__category"
+        )
 
+        # 1️⃣ Superuser → all reviews
         if user.is_superuser:
-            return RestaurantReview.objects.all().select_related("menu_item", "user")
+            return qs
 
-        # HOTEL ADMIN
-        if hasattr(user, "hotel") and user.hotel:
-            return RestaurantReview.objects.filter(
-                menu_item__category__hotel=user.hotel
-            ).select_related("menu_item", "user")
+        role = getattr(user, "role", None)
+        if not role:
+            return RestaurantReview.objects.none()
 
-        # STAFF
-        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
-            return RestaurantReview.objects.filter(
-                menu_item__category__hotel=user.staff_profile.hotel
-            ).select_related("menu_item", "user")
+        role_name = role.name.lower()
 
+        # 2️⃣ Restaurant Admin → reviews of their own restaurant
+        if role_name == "admin":
+            # Restaurant admin (owns a restaurant)
+            if hasattr(user, "restaurant"):
+                return qs.filter(
+                    menu_item__category__restaurant=user.restaurant
+                )
+
+            # Hotel admin → reviews of restaurant(s) under their hotel
+            return qs.filter(
+                menu_item__category__restaurant__hotel__owner=user
+            )
+
+        # 3️⃣ Staff → reviews of restaurant linked to their hotel
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+                return qs.filter(
+                    menu_item__category__restaurant__hotel=user.staff_profile.hotel
+                )
+            return RestaurantReview.objects.none()
+
+        # 4️⃣ Customer → read-only access
+        if role_name == "customer":
+            restaurant_slug = self.request.query_params.get("restaurant")
+            if restaurant_slug:
+                return qs.filter(
+                    menu_item__category__restaurant__slug=restaurant_slug
+                )
+            return qs
+
+        # 5️⃣ Vendor / Others → no access
         return RestaurantReview.objects.none()
+
     
     #  ACTION: ADMIN REPLY
     @action(detail=True, methods=['patch'], url_path='submit-reply')
@@ -429,27 +477,44 @@ class ServiceReviewViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = ServiceReview.objects.all()
 
+        # 1️⃣ Superuser → all reviews
         if user.is_superuser:
-            return ServiceReview.objects.all()
+            return qs
 
-        # HOTEL ADMIN
-        if hasattr(user, "hotel") and user.hotel:
+        role = getattr(user, "role", None)
+        if not role:
+            return ServiceReview.objects.none()
+
+        role_name = role.name.lower()
+
+        # 2️⃣ Hotel Admin → reviews for their hotel's service requests
+        if role_name == "admin":
             valid_ids = RoomServiceRequest.objects.filter(
-                room__hotel=user.hotel
+                room__hotel__owner=user
             ).values_list("id", flat=True)
 
-            return ServiceReview.objects.filter(reference_id__in=valid_ids)
+            return qs.filter(reference_id__in=valid_ids)
 
-        # STAFF
-        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
-            valid_ids = RoomServiceRequest.objects.filter(
-                room__hotel=user.staff_profile.hotel
-            ).values_list("id", flat=True)
+        # 3️⃣ Staff → reviews for assigned hotel
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+                valid_ids = RoomServiceRequest.objects.filter(
+                    room__hotel=user.staff_profile.hotel
+                ).values_list("id", flat=True)
 
-            return ServiceReview.objects.filter(reference_id__in=valid_ids)
+                return qs.filter(reference_id__in=valid_ids)
 
+            return ServiceReview.objects.none()
+
+        # 4️⃣ Customer → only their own reviews
+        if role_name == "customer":
+            return qs.filter(user=user)
+
+        # 5️⃣ Vendor / Others → no access
         return ServiceReview.objects.none()
+
 
     #  ACTION: ADMIN REPLY 
     @action(detail=True, methods=['patch'], url_path='submit-reply')
@@ -484,26 +549,37 @@ class StaffReviewViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = StaffReview.objects.all().select_related(
+            'staff_member', 'user'
+        )
 
-        # 1. Superuser
+        # 1️⃣ Superuser → all reviews
         if user.is_superuser:
-            return StaffReview.objects.all().select_related('staff_member', 'user')
+            return qs
 
-        # 2. Hotel Admin (Owner)
-        if hasattr(user, "hotel") and user.hotel:
-            # Show reviews where the staff member belongs to the Admin's hotel
-            return StaffReview.objects.filter(
-                staff_member__hotel=user.hotel
-            ).select_related('staff_member', 'user')
+        role = getattr(user, "role", None)
+        if not role:
+            return StaffReview.objects.none()
 
-        # 3. Staff Member 
-        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
-            # A staff member usually shouldn't see all staff reviews unless they are a Manager.
-            return StaffReview.objects.filter(
-                staff_member__hotel=user.staff_profile.hotel
-            ).select_related('staff_member', 'user')
+        role_name = role.name.lower()
 
+        # 2️⃣ Hotel Admin → reviews of staff in their hotel
+        if role_name == "admin":
+            return qs.filter(
+                staff_member__hotel__owner=user
+            )
+
+        # 3️⃣ Staff → only reviews about themselves
+        if role_name == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(
+                    staff_member=user.staff_profile
+                )
+            return StaffReview.objects.none()
+
+        # 4️⃣ Others → no access
         return StaffReview.objects.none()
+
     
     # --- ACTION: ADMIN REPLY (Added Here) ---
     @action(detail=True, methods=['patch'], url_path='submit-reply')
@@ -522,254 +598,3 @@ class StaffReviewViewSet(ProtectedModelViewSet):
         review.reply = reply_text
         review.save()
         return Response({"message": "Reply submitted successfully.", "reply": review.reply}, status=status.HTTP_200_OK)
-
-
-# class PublicReviewViewSet(ReadOnlyModelViewSet):
-#     permission_classes = [AllowAny]
-#     queryset = HotelReview.objects.none()
-#     serializer_class = UnifiedReviewSerializer
-
-#     def list(self, request):
-#         """
-#         /api/public-reviews/
-#         Returns top reviews (rating >= 4) without any extra path.
-#         """
-
-#         limit = 3
-
-#         # Fetch hotel reviews rating 4+
-#         hotel_reviews = list(
-#             HotelReview.objects.filter(rating__gte=4)
-#             .select_related('user')
-#             .order_by('-date')
-#         )
-
-#         # Fetch restaurant reviews rating 4+
-#         restro_reviews = list(
-#             RestaurantReview.objects.filter(rating__gte=4)
-#             .select_related('user')
-#             .order_by('-date')
-#         )
-
-#         # Combine & sort by date
-#         combined = hotel_reviews + restro_reviews
-#         combined = sorted(combined, key=lambda x: x.date, reverse=True)
-
-#         # Limit top 10
-#         final_list = combined[:limit]
-
-#         serializer = UnifiedReviewSerializer(
-#             final_list, many=True, context={'request': request}
-#         )
-
-#         return Response(serializer.data)
-    
-
-# # class ReviewDashboardStatsView(APIView):
-
-
-# class ReviewDashboardStatsView(APIView):
-#     """
-#     API for the Review Stats Cards:
-#     1. Overall Rating
-#     2. Total Reviews
-#     3. This Month Reviews
-#     4. Response Rate
-#     """
-#     permission_classes = [IsAuthenticated]
-
-#     def get(self, request):
-#         user = request.user
-#         target_hotel = None
-
-#         # ====================================================
-#         # STEP 1: ISOLATION LOGIC (Define Scope)
-#         # ====================================================
-#         if user.is_superuser:
-#             # Superuser can filter by hotel_id, otherwise Global
-#             hotel_id = request.query_params.get('hotel_id')
-#             if hotel_id:
-#                 target_hotel = Hotel.objects.filter(id=hotel_id).first()
-#         else:
-#             # Regular Admin/Staff Logic
-#             if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-#                 target_hotel = getattr(user, 'hotel', None)
-#             elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-#                 target_hotel = user.staff_profile.hotel
-            
-#             # Security Check
-#             if not target_hotel:
-#                 return Response(
-#                     {"error": "Access Denied: No hotel associated with this user."}, 
-#                     status=status.HTTP_403_FORBIDDEN
-#                 )
-
-#         # ====================================================
-#         # STEP 2: DATE FILTERS
-#         # ====================================================
-#         now = timezone.now()
-#         current_month = now.month
-#         current_year = now.year
-
-#         # ====================================================
-#         # STEP 3: HELPER FUNCTION (Aggregation Logic)
-#         # ====================================================
-#         def calculate_stats(queryset):
-#             data = queryset.aggregate(
-#                 avg_rating=Avg('rating'),
-#                 total_count=Count('id'),
-#                 this_month_count=Count('id', filter=Q(date__year=current_year, date__month=current_month)),
-#                 replied_count=Count('id', filter=~Q(reply='') & ~Q(reply=None))
-#             )
-#             return {
-#                 'avg': data['avg_rating'] or 0,
-#                 'count': data['total_count'] or 0,
-#                 'month': data['this_month_count'] or 0,
-#                 'replied': data['replied_count'] or 0
-#             }
-
-#         # ====================================================
-#         # STEP 4: FETCH DATA (With Specific Paths)
-#         # ====================================================
-        
-#         # --- A. Hotel Reviews ---
-#         # Path: Direct 'hotel' field
-#         qs_hotel = HotelReview.objects.all()
-#         if target_hotel:
-#             qs_hotel = qs_hotel.filter(hotel=target_hotel)
-        
-#         hotel_stats = calculate_stats(qs_hotel)
-
-#         # --- B. Restaurant Reviews ---
-#         # Path: menu_item -> category -> hotel
-#         qs_rest = RestaurantReview.objects.all()
-#         if target_hotel:
-#             qs_rest = qs_rest.filter(menu_item__category__hotel=target_hotel)
-        
-#         rest_stats = calculate_stats(qs_rest)
-
-#         # --- C. Service Reviews (The Tricky One) ---
-#         # Path: ServiceReview ke pass direct relation nahi hai, sirf 'reference_id' hai.
-#         # Logic: Pehle Hotel ke saare 'RoomServiceRequest' ids nikalo, fir match karo.
-#         qs_service = ServiceReview.objects.all()
-        
-#         if target_hotel:
-#             # 1. Get all RoomServiceRequest IDs for this hotel
-#             valid_service_ids = RoomServiceRequest.objects.filter(
-#                 room__hotel=target_hotel
-#             ).values_list('id', flat=True)
-            
-#             # 2. Filter ServiceReviews jo in IDs se match karein
-#             qs_service = qs_service.filter(reference_id__in=valid_service_ids)
-
-#         service_stats = calculate_stats(qs_service)
-
-#         # ====================================================
-#         # STEP 5: COMBINE & CALCULATE TOTALS
-#         # ====================================================
-        
-#         total_reviews = hotel_stats['count'] + rest_stats['count'] + service_stats['count']
-#         total_this_month = hotel_stats['month'] + rest_stats['month'] + service_stats['month']
-#         total_replied = hotel_stats['replied'] + rest_stats['replied'] + service_stats['replied']
-
-#         # Weighted Average Calculation
-#         overall_rating = 0
-#         if total_reviews > 0:
-#             total_score = (
-#                 (hotel_stats['avg'] * hotel_stats['count']) +
-#                 (rest_stats['avg'] * rest_stats['count']) +
-#                 (service_stats['avg'] * service_stats['count'])
-#             )
-#             overall_rating = total_score / total_reviews
-
-#         # Response Rate Calculation
-#         response_rate = 0
-#         if total_reviews > 0:
-#             response_rate = (total_replied / total_reviews) * 100
-
-#         # ====================================================
-#         # STEP 6: RETURN RESPONSE
-#         # ====================================================
-#         return Response({
-#             "scope": target_hotel.name if target_hotel else "Global Stats",
-#             "overall_rating": round(overall_rating, 1),
-#             "total_reviews": total_reviews,
-#             "this_month": total_this_month,
-#             "response_rate": f"{int(response_rate)}%"
-#         }, status=status.HTTP_200_OK)
-    
-
-# class RatingBreakdownView(APIView):
-#     """
-#     API for Rating Breakdown Cards (Hotel, Restaurant, Services)
-#     Returns list of categories with rating and review count.
-#     """
-#     permission_classes = [IsAuthenticated]
-
-#     def get(self, request):
-#         user = request.user
-#         target_hotel = None
-
-#         # ====================================================
-#         # 1. ISOLATION LOGIC (Same as before)
-#         # ====================================================
-#         if user.is_superuser:
-#             hotel_id = request.query_params.get('hotel_id')
-#             if hotel_id:
-#                 target_hotel = Hotel.objects.filter(id=hotel_id).first()
-#         else:
-#             if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-#                 target_hotel = getattr(user, 'hotel', None)
-#             elif hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-#                 target_hotel = user.staff_profile.hotel
-            
-#             if not target_hotel:
-#                 return Response({"error": "No hotel access"}, status=403)
-
-#         # ====================================================
-#         # 2. HELPER TO CALCULATE STATS
-#         # ====================================================
-#         def get_category_stats(name, queryset):
-#             stats = queryset.aggregate(avg=Avg('rating'), count=Count('id'))
-#             return {
-#                 "category": name,
-#                 "rating": round(stats['avg'], 1) if stats['avg'] else 0.0,
-#                 "reviews": stats['count'] or 0
-#             }
-
-#         data = []
-
-#         # ====================================================
-#         # 3. CARD 1: HOTEL SERVICE
-#         # ====================================================
-#         qs_hotel = HotelReview.objects.all()
-#         if target_hotel:
-#             qs_hotel = qs_hotel.filter(hotel=target_hotel)
-        
-#         data.append(get_category_stats("Hotel Service", qs_hotel))
-
-#         # ====================================================
-#         # 4. CARD 2: RESTAURANT
-#         # ====================================================
-#         qs_rest = RestaurantReview.objects.all()
-#         if target_hotel:
-#             # Path: menu_item -> category -> hotel
-#             qs_rest = qs_rest.filter(menu_item__category__hotel=target_hotel)
-        
-#         data.append(get_category_stats("Restaurant", qs_rest))
-
-#         # ====================================================
-#         # 5. CARD 3: ROOM SERVICES (Laundry, Spa, etc.)
-#         # ====================================================
-#         # Humare paas ServiceReview model hai, to iska card bana dete hain
-#         qs_service = ServiceReview.objects.all()
-#         if target_hotel:
-#             # Logic: Find IDs from RoomServiceRequest linked to this hotel
-#             valid_ids = RoomServiceRequest.objects.filter(
-#                 room__hotel=target_hotel
-#             ).values_list('id', flat=True)
-#             qs_service = qs_service.filter(reference_id__in=valid_ids)
-
-#         data.append(get_category_stats("Room & Services", qs_service))
-
-#         return Response(data, status=status.HTTP_200_OK)

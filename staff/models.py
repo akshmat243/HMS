@@ -14,7 +14,7 @@ class Staff(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_profile')
     hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='staff_restaurant')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
     slug = models.SlugField(unique=True, blank=True)
 
     designation = models.CharField(max_length=100, blank=True, null=True)

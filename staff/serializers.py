@@ -1,4 +1,6 @@
 from rest_framework import serializers
+
+from Restaurant.models import Restaurant
 from .models import Staff, Attendance, Payroll, Leave, StaffDocument
 from datetime import time
 from django.contrib.auth import get_user_model
@@ -80,6 +82,8 @@ class StaffSerializer(serializers.ModelSerializer):
 
     # -------- incoming helpers --------
     hotel_slug = serializers.SlugField(write_only=True, required=False)
+    restaurant_slug = serializers.SlugField(write_only=True, required=False)
+    
     role_slug = serializers.SlugField(write_only=True, required=False)
 
     full_name = serializers.CharField(write_only=True)
@@ -109,7 +113,7 @@ class StaffSerializer(serializers.ModelSerializer):
             "id", "slug",
 
             # relations
-            "user", "hotel",
+            "user", "hotel", "restaurant",
             "user_full_name", "user_email", "user_phone",
 
             # user input
@@ -121,7 +125,7 @@ class StaffSerializer(serializers.ModelSerializer):
             "monthly_salary", "profile_image",
 
             # helpers
-            "hotel_slug", "role_slug",
+            "hotel_slug", "restaurant_slug", "role_slug",
             "documents", "documents_data",
 
             "created_at", "updated_at",
@@ -156,6 +160,7 @@ class StaffSerializer(serializers.ModelSerializer):
         # remove non-model helpers
         validated_data.pop("documents", None)
         hotel_slug = validated_data.pop("hotel_slug", None)
+        restaurant_slug = validated_data.pop("restaurant_slug", None)
         role_slug = validated_data.pop("role_slug", None)
 
         # user fields
@@ -197,10 +202,15 @@ class StaffSerializer(serializers.ModelSerializer):
         hotel = None
         if hotel_slug:
             hotel = Hotel.objects.get(slug=hotel_slug)
+            
+        restaurant = None
+        if restaurant_slug:
+            restaurant = Restaurant.objects.get(slug=restaurant_slug)
 
         staff = Staff.objects.create(
             user=user,
             hotel=hotel,
+            restaurant=restaurant,
             **validated_data
         )
 
