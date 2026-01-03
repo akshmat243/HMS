@@ -24,14 +24,25 @@ class MaintenanceCategoryViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
 
         if user.is_superuser:
-            return self.queryset
+            return qs
 
-        if hasattr(user, "hotel") and user.hotel:
-            return self.queryset.filter(hotel=user.hotel)
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
 
-        return self.queryset.none()
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
+        return qs.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
@@ -49,14 +60,25 @@ class FacilityViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
 
         if user.is_superuser:
-            return self.queryset
+            return qs
 
-        if hasattr(user, "hotel") and user.hotel:
-            return self.queryset.filter(hotel=user.hotel)
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
 
-        return self.queryset.none()
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
+        return qs.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
@@ -74,14 +96,25 @@ class EquipmentViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
 
         if user.is_superuser:
-            return self.queryset
+            return qs
 
-        if hasattr(user, "hotel") and user.hotel:
-            return self.queryset.filter(hotel=user.hotel)
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
 
-        return self.queryset.none()
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
+        return qs.none()
 
     def perform_create(self, serializer):
         serializer.save(hotel=self.request.user.hotel)
@@ -101,20 +134,25 @@ class MaintenanceTaskViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        base_qs = self.queryset.order_by("-created_at")
+        qs = super().get_queryset()
 
-        # 1️⃣ Superuser → can see all hotels
         if user.is_superuser:
-            return base_qs
+            return qs
 
-        # 2️⃣ Admin → only his hotel
-        if hasattr(user, "role") and user.role.name.lower() == "admin":
-            if hasattr(user, "hotel") and user.hotel:
-                return base_qs.filter(hotel=user.hotel)
-            return base_qs.none()
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+        
+        # ✅ Vendor: jis hotel se linked hai
+        if user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                if user.supplier_profile.hotel:
+                    return qs.filter(hotel=user.supplier_profile.hotel)
 
-        # 3️⃣ Staff → only assigned tasks
-        return base_qs.filter(assigned_to=user)
+        if user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                if user.staff_profile.hotel:
+                    return qs.filter(hotel=user.staff_profile.hotel)
+        return qs.none()
 
     # --------------------------
     # Assign task

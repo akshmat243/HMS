@@ -9,9 +9,9 @@ class RestaurantAdmin(admin.ModelAdmin):
 
 @admin.register(MenuCategory)
 class MenuCategoryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'hotel')
+    list_display = ('name', 'restaurant')
     search_fields = ('name',)
-    list_filter = ('hotel',)
+    list_filter = ('restaurant',)
 
 
 @admin.register(MenuItem)
@@ -23,8 +23,8 @@ class MenuItemAdmin(admin.ModelAdmin):
 
 @admin.register(Table)
 class TableAdmin(admin.ModelAdmin):
-    list_display = ('number', 'hotel', 'capacity', 'status')
-    list_filter = ('hotel', 'status')
+    list_display = ('number', 'restaurant', 'capacity', 'status')
+    list_filter = ('restaurant', 'status')
     search_fields = ('number',)
 
 
@@ -37,15 +37,15 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(RestaurantOrder)
 class RestaurantOrderAdmin(admin.ModelAdmin):
-    list_display = ('order_code', 'guest_name', 'guest_phone', 'hotel', 'table', 'status', 'order_time', 'completed_at')
-    list_filter = ('status', 'hotel', 'order_time')
+    list_display = ('order_code', 'guest_name', 'guest_phone', 'restaurant', 'table', 'status', 'order_time', 'completed_at')
+    list_filter = ('status', 'restaurant', 'order_time')
     search_fields = ('guest_name', 'guest_phone', 'slug')
     readonly_fields = ('slug', 'order_time', 'completed_at')
     inlines = [OrderItemInline]
 
     fieldsets = (
         ('Order Info', {
-            'fields': ('slug', 'hotel', 'table', 'guest_name', 'guest_phone', 'remarks', 'status')
+            'fields': ('slug', 'restaurant', 'table', 'guest_name', 'guest_phone', 'remarks', 'status')
         }),
         ('Timestamps', {
             'fields': ('order_time', 'completed_at'),
