@@ -1,5 +1,5 @@
 import csv
-import os
+import os, uuid
 from django.core.management.base import BaseCommand
 from django.apps import apps
 from django.conf import settings
@@ -111,19 +111,31 @@ class Command(BaseCommand):
                     if field.primary_key or field.auto_created:
                         continue
 
-                    name = field.name
+                    field_name = field.name
+                    value = row.get(field_name)
 
-                    if field.is_relation:
-                        if row.get(name):
+                    # ✅ UUID FIELD HANDLE
+                    if field.get_internal_type() == "UUIDField":
+                        if value:
                             try:
-                                clean_data[name] = field.related_model.objects.get(
-                                    id=row[name]
-                                )
-                            except field.related_model.DoesNotExist:
-                                clean_data[name] = None
+                                clean_data[field_name] = uuid.UUID(value)
+                            except ValueError:
+                                # Invalid UUID → skip so Django generates new one
+                                continue
                         continue
 
-                    clean_data[name] = row.get(name) or None
+                    # ✅ ForeignKey handling
+                    if field.is_relation:
+                        if value:
+                            try:
+                                clean_data[field_name] = field.related_model.objects.get(id=value)
+                            except field.related_model.DoesNotExist:
+                                clean_data[field_name] = None
+                        continue
+
+                    # Normal field
+                    clean_data[field_name] = value or None
+
 
                 # Required field validation
                 if any(not clean_data.get(f) for f in required_fields):
