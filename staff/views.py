@@ -18,6 +18,7 @@ class StaffDocumentViewSet(ProtectedModelViewSet):
     serializer_class = StaffDocumentSerializer
     lookup_field = "id"
 
+
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()

@@ -15,6 +15,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 import random
 from Hotel.models import Hotel
+from Restaurant.models import Restaurant
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -286,19 +287,33 @@ class LoginView(APIView):
                     "permission": rp.permission_type.code
                 })
 
-        # 🔹 Step 9: Get hotel slug (if applicable)
+        # 🔟 Detect owned modules
         hotel_slug = None
+        restaurant_slug = None
+
+        # Superuser → manage all
         if user.is_superuser:
-            # Superuser can manage all hotels
             hotel_slug = None
-        elif hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
-            # Hotel admin owns a hotel
+            restaurant_slug = None
+
+        else:
+            # Hotel owner
             hotel = Hotel.objects.filter(owner=user).first()
             if hotel:
                 hotel_slug = hotel.slug
-        elif hasattr(user, "staff_profile") and getattr(user.staff_profile, "hotel", None):
-            # Staff assigned to a hotel
-            hotel_slug = user.staff_profile.hotel.slug
+
+            # Restaurant owner
+            restaurant = Restaurant.objects.filter(owner=user).first()
+            if restaurant:
+                restaurant_slug = restaurant.slug
+
+            # Staff overrides ownership
+            if user.role and user.role.name.lower() == "staff":
+                if hasattr(user, "staff_profile"):
+                    if user.staff_profile.hotel:
+                        hotel_slug = user.staff_profile.hotel.slug
+                    if user.staff_profile.restaurant:
+                        restaurant_slug = user.staff_profile.restaurant.slug
 
         # 🔹 Step 10: Return complete response
         return Response({
@@ -310,6 +325,7 @@ class LoginView(APIView):
                 "role": user.role.name if user.role else None,
                 "permissions": accessible_models,
                 "hotel_slug": hotel_slug,  # ✅ Added
+                "restaurant_slug": restaurant_slug,
             },
         }, status=status.HTTP_200_OK)
         

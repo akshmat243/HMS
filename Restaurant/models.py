@@ -31,7 +31,7 @@ class Restaurant(models.Model):
     owner = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
-        related_name='Restaurant',
+        related_name='restaurant',
         limit_choices_to={'role__name': 'Admin'},
         help_text="The admin user who owns this Restaurant"
     )
@@ -73,13 +73,17 @@ class Restaurant(models.Model):
 
 class MenuCategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='menu_categories')
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.CASCADE,
+        related_name="menu_categories"
+    )
     name = models.CharField(max_length=100)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
 
     def __str__(self):
-        return f"{self.name} - {self.hotel.name}"
+        return f"{self.name} - {self.restaurant.name}"
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -126,7 +130,11 @@ class Table(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='tables')
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.CASCADE,
+        related_name="tables"
+    )
     number = models.CharField(max_length=10)
     slug = models.SlugField(unique=True, blank=True)
     table_code = models.CharField(max_length=10, unique=True, blank=True)
@@ -136,7 +144,7 @@ class Table(models.Model):
     status_updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Table {self.number} - {self.hotel.name}"
+        return f"Table {self.number} - {self.restaurant.name}"
 
     def save(self, *args, **kwargs):
         if not self.table_code:
@@ -149,7 +157,7 @@ class Table(models.Model):
             self.table_code = f"T{new_number:02d}"  # e.g., T01, T02, T10
 
         if not self.slug:
-            base_slug = slugify(f"{self.hotel.name}-{self.number}")
+            base_slug = slugify(f"{self.restaurant.name}-{self.number}")
             counter = 1
             new_slug = base_slug
             while Table.objects.filter(slug=new_slug).exists():
@@ -164,7 +172,7 @@ class Table(models.Model):
         super().save(*args, **kwargs)
     
     def get_last_status_time(self):
-        from Restaurant.models import RestaurantOrder
+        # from Restaurant.models import RestaurantOrder
 
         now = timezone.now()
 
@@ -207,7 +215,11 @@ class RestaurantOrder(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     slug = models.SlugField(unique=True, blank=True)
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
-    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='restaurant_orders')
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.CASCADE,
+        related_name="orders"
+    )
     guest_name = models.CharField(max_length=100)
     guest_phone = models.CharField(max_length=15)
     remarks = models.TextField(blank=True, null=True)
@@ -256,7 +268,7 @@ class RestaurantOrder(models.Model):
 
         # ✅ Generate slug
         if not self.slug:
-            self.slug = slugify(f"{self.hotel.slug}-{self.order_code}")
+            self.slug = slugify(f"{self.restaurant.slug}-{self.order_code}")
 
         # ✅ Status change timestamp
         if not is_new:

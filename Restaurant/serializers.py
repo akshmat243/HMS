@@ -53,27 +53,38 @@ class RestaurantSerializer(serializers.ModelSerializer):
 
 
 class MenuCategorySerializer(serializers.ModelSerializer):
-    hotel = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Hotel.objects.all()
+    restaurant = serializers.SlugRelatedField(
+        slug_field="slug",
+        queryset=Restaurant.objects.all()
     )
 
     class Meta:
         model = MenuCategory
-        fields = '__all__'
-        read_only_fields = ['slug']
+        fields = "__all__"
+        read_only_fields = ["slug"]
 
     def validate_name(self, value):
-        hotel_slug = self.initial_data.get('hotel')
-        hotel = Hotel.objects.filter(slug=hotel_slug).first()
-        if not hotel:
-            raise serializers.ValidationError("Invalid hotel.")
-        qs = MenuCategory.objects.filter(name=value, hotel=hotel)
+        restaurant_slug = self.initial_data.get("restaurant")
+        restaurant = Restaurant.objects.filter(slug=restaurant_slug).first()
+
+        if not restaurant:
+            raise serializers.ValidationError("Invalid restaurant.")
+
+        qs = MenuCategory.objects.filter(
+            name__iexact=value,
+            restaurant=restaurant
+        )
+
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
+
         if qs.exists():
-            raise serializers.ValidationError("This category already exists for the hotel.")
+            raise serializers.ValidationError(
+                "This category already exists for the restaurant."
+            )
+
         return value
+
 
 
 class MenuItemSerializer(serializers.ModelSerializer):
@@ -99,36 +110,70 @@ class MenuItemSerializer(serializers.ModelSerializer):
 
 
 class TableSerializer(serializers.ModelSerializer):
-    hotel = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Hotel.objects.all()
+    restaurant = serializers.SlugRelatedField(
+        slug_field="slug",
+        queryset=Restaurant.objects.all()
     )
-    
+
     last_status_time = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Table
-        fields = '__all__'
-        read_only_fields = ['slug']
-    
+        fields = "__all__"
+        read_only_fields = ["slug", "table_code", "status_updated_at"]
+
     def get_last_status_time(self, obj):
         minutes = obj.get_last_status_time()
         if minutes is None:
             return None
-        return f"{minutes} min"   
-
+        return f"{minutes} min"
 
     def validate_number(self, value):
-        hotel_slug = self.initial_data.get('hotel')
-        hotel = Hotel.objects.filter(slug=hotel_slug).first()
-        if not hotel:
-            raise serializers.ValidationError("Invalid hotel.")
-        qs = Table.objects.filter(number=value, hotel=hotel)
+        restaurant_slug = self.initial_data.get("restaurant")
+        restaurant = Restaurant.objects.filter(slug=restaurant_slug).first()
+
+        if not restaurant:
+            raise serializers.ValidationError("Invalid restaurant.")
+
+        qs = Table.objects.filter(
+            number=value,
+            restaurant=restaurant
+        )
+
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
+
         if qs.exists():
-            raise serializers.ValidationError("Table with this number already exists in this hotel.")
+            raise serializers.ValidationError(
+                "Table with this number already exists in this restaurant."
+            )
+
         return value
+    
+    def validate(self, data):
+        request = self.context.get("request")
+        if not request:
+            return data
+
+        user = request.user
+        restaurant = data.get("restaurant")
+
+        # Admin → only own restaurant
+        if user.role.name.lower() == "admin" and restaurant.owner != user:
+            raise serializers.ValidationError(
+                "You cannot manage tables for this restaurant."
+            )
+
+        # Staff → only assigned restaurant
+        if user.role.name.lower() == "staff":
+            if not hasattr(user, "staff_profile") or user.staff_profile.restaurant != restaurant:
+                raise serializers.ValidationError(
+                    "You cannot manage tables for this restaurant."
+                )
+
+        return data
+
+
 
 class OrderItemSerializer(serializers.ModelSerializer):
     menu_item = serializers.SlugRelatedField(
@@ -150,34 +195,64 @@ class OrderItemSerializer(serializers.ModelSerializer):
         return data
     
 class RestaurantOrderSerializer(serializers.ModelSerializer):
-    table = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Table.objects.all(),
-        allow_null=True,
+    # 🔹 Incoming
+    restaurant = serializers.SlugRelatedField(
+        slug_field="slug",
+        queryset=Restaurant.objects.all(),
         write_only=True
     )
 
+    table = serializers.SlugRelatedField(
+        slug_field="slug",
+        queryset=Table.objects.all(),
+        allow_null=True,
+        required=False,
+        write_only=True
+    )
+
+    # 🔹 Outgoing
     table_code = serializers.SerializerMethodField()
-    hotel = serializers.SlugRelatedField(slug_field='slug', read_only=True)
+    restaurant_slug = serializers.CharField(
+        source="restaurant.slug",
+        read_only=True
+    )
+
     order_items = OrderItemSerializer(many=True, required=False)
     status_duration = serializers.SerializerMethodField()
 
     class Meta:
         model = RestaurantOrder
         fields = [
-            'slug', 'order_code', 'table_code', 'hotel', 'table',
-            'guest_name', 'guest_phone', 'remarks', 'status',
-            'order_time', 'completed_at', 'order_items',
-            'total_quantity', 'subtotal', 'sgst', 'cgst',
-            'discount', 'discount_rule', 'grand_total',
-            'status_duration'
+            "slug", "order_code",
+            "restaurant", "restaurant_slug",
+            "table", "table_code",
+
+            "guest_name", "guest_phone", "remarks", "status",
+            "order_time", "completed_at",
+
+            "order_items",
+
+            "total_quantity", "subtotal",
+            "sgst", "cgst",
+            "discount", "discount_rule",
+            "grand_total",
+
+            "status_duration",
         ]
+
         read_only_fields = [
-            'slug', 'order_code', 'table_code', 'order_time',
-            'completed_at', 'total_quantity', 'subtotal',
-            'sgst', 'cgst', 'discount', 'discount_rule',
-            'grand_total', 'status_duration'
+            "slug", "order_code", "table_code",
+            "order_time", "completed_at",
+            "total_quantity", "subtotal",
+            "sgst", "cgst",
+            "discount", "discount_rule",
+            "grand_total",
+            "status_duration",
         ]
+
+    # ------------------------
+    # HELPERS
+    # ------------------------
 
     def get_table_code(self, obj):
         return obj.table.table_code if obj.table else None
@@ -188,27 +263,40 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
         diff = timezone.now() - obj.status_updated_at
         return f"{int(diff.total_seconds() // 60)} min"
 
+    # ------------------------
+    # CREATE
+    # ------------------------
+
     def create(self, validated_data):
-        request = self.context.get('request')
+        request = self.context["request"]
         user = request.user
 
-        # Assign hotel from logged-in user
-        if hasattr(user, 'hotel_profile'):
-            validated_data['hotel'] = user.hotel_profile.hotel
-        elif hasattr(user, 'hotel'):
-            validated_data['hotel'] = user.hotel
-        else:
-            raise serializers.ValidationError("User has no hotel assigned.")
-
-        items_data = validated_data.pop('order_items', [])
+        items_data = validated_data.pop("order_items", [])
+        restaurant = validated_data.get("restaurant")
         table = validated_data.get("table")
-        
-        # ✅ Ensure table belongs to same hotel
-        if table and table.hotel != validated_data["hotel"]:
-            raise serializers.ValidationError("This table does not belong to your hotel.")
-        
+
+        # ✅ ROLE-BASED RESTAURANT OWNERSHIP CHECK
+        if user.role.name.lower() == "admin":
+            if restaurant.owner != user:
+                raise serializers.ValidationError(
+                    "You cannot create orders for this restaurant."
+                )
+
+        if user.role.name.lower() == "staff":
+            if not hasattr(user, "staff_profile") or user.staff_profile.restaurant != restaurant:
+                raise serializers.ValidationError(
+                    "You cannot create orders for this restaurant."
+                )
+
+        # ✅ Ensure table belongs to restaurant
+        if table and table.restaurant != restaurant:
+            raise serializers.ValidationError(
+                "Selected table does not belong to this restaurant."
+            )
+
         order = RestaurantOrder.objects.create(**validated_data)
-        
+
+        # ✅ Lock table
         if table:
             table.status = "occupied"
             table.save(update_fields=["status"])
@@ -216,31 +304,39 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
         for item in items_data:
             OrderItem.objects.create(order=order, **item)
 
-        order.save()
         order.refresh_from_db()
-
         return order
 
+    # ------------------------
+    # UPDATE
+    # ------------------------
+
     def update(self, instance, validated_data):
-        items_data = validated_data.pop('order_items', None)
+        request = self.context["request"]
+        user = request.user
+
+        items_data = validated_data.pop("order_items", None)
+
         old_status = instance.status
         new_status = validated_data.get("status", old_status)
+
         old_table = instance.table
         new_table = validated_data.get("table", old_table)
 
-        # ✅ Prevent cross-hotel tampering
-        request = self.context.get("request")
-        user = request.user
-        user_hotel = getattr(user, "hotel_profile", None)
-        if user_hotel:
-            user_hotel = user_hotel.hotel
-        else:
-            user_hotel = getattr(user, "hotel", None)
+        # ✅ Prevent cross-restaurant tampering
+        if user.role.name.lower() == "admin":
+            if instance.restaurant.owner != user:
+                raise serializers.ValidationError(
+                    "You cannot modify orders from another restaurant."
+                )
 
-        if instance.hotel != user_hotel:
-            raise serializers.ValidationError("You cannot modify orders from another hotel.")
+        if user.role.name.lower() == "staff":
+            if not hasattr(user, "staff_profile") or user.staff_profile.restaurant != instance.restaurant:
+                raise serializers.ValidationError(
+                    "You cannot modify orders from another restaurant."
+                )
 
-        # ✅ If table changed, update statuses
+        # ✅ Table change handling
         if old_table != new_table:
             if old_table:
                 old_table.status = "available"
@@ -249,31 +345,33 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
                 new_table.status = "occupied"
                 new_table.save(update_fields=["status"])
 
-        # ✅ If status changed → update table status
+        # ✅ Status → table logic
         if old_status != new_status:
             if new_status in ["completed", "cancelled"]:
                 if new_table:
                     new_table.status = "available"
                     new_table.save(update_fields=["status"])
-
             elif new_status in ["preparing", "served"]:
                 if new_table:
                     new_table.status = "occupied"
                     new_table.save(update_fields=["status"])
 
-        # ✅ Apply validated data
-        for attr, val in validated_data.items():
-            setattr(instance, attr, val)
+        # ✅ Apply updates
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
         instance.save()
 
-        # ✅ Replace order items
+        # ✅ Replace items
         if items_data is not None:
             instance.order_items.all().delete()
             for item in items_data:
                 OrderItem.objects.create(order=instance, **item)
-                
+
+        # ✅ Invoice creation (served)
         if new_status == "served":
             from django.contrib.contenttypes.models import ContentType
+
             content_type = ContentType.objects.get_for_model(RestaurantOrder)
 
             invoice, created = Invoice.objects.get_or_create(
@@ -287,13 +385,11 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
                 },
             )
 
-            # ✅ If invoice already exists → update it
             if not created:
                 invoice.total_amount = instance.grand_total
                 invoice.save(update_fields=["total_amount"])
                 invoice.items.all().delete()
 
-            # ✅ Add invoice item
             InvoiceItem.objects.create(
                 invoice=invoice,
                 description=f"Restaurant Order - {instance.order_code}",
@@ -306,47 +402,77 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
 
 class TableReservationSerializer(serializers.ModelSerializer):
     table = serializers.SlugRelatedField(
-        slug_field='slug',
+        slug_field="slug",
         queryset=Table.objects.all()
     )
 
     class Meta:
         model = TableReservation
-        fields = '__all__'
-        read_only_fields = ['slug', 'created_at', 'status']
+        fields = "__all__"
+        read_only_fields = ["slug", "created_at", "status"]
 
     def validate(self, data):
-        table = data.get("table")
-        date = data.get("reservation_date")
-        time = data.get("reservation_time")
-
-        # ✅ Check table belongs to user's hotel
         request = self.context.get("request")
         user = request.user
-        hotel = getattr(user, "hotel_profile", None)
-        if hotel:
-            hotel = hotel.hotel
+
+        table = data.get("table")
+        reservation_date = data.get("reservation_date")
+        reservation_time = data.get("reservation_time")
+
+        restaurant = table.restaurant
+
+        # ----------------------------------
+        # ROLE-BASED RESTAURANT CHECK
+        # ----------------------------------
+
+        # Superuser → allowed
+        if user.is_superuser:
+            pass
+
+        # Admin → only own restaurant
+        elif user.role.name.lower() == "admin":
+            if restaurant.owner != user:
+                raise serializers.ValidationError(
+                    "You cannot reserve tables for this restaurant."
+                )
+
+        # Staff → only assigned restaurant
+        elif user.role.name.lower() == "staff":
+            if not hasattr(user, "staff_profile") or user.staff_profile.restaurant != restaurant:
+                raise serializers.ValidationError(
+                    "You cannot reserve tables for this restaurant."
+                )
+
+        # Customer → restaurant must be open
+        elif user.role.name.lower() == "customer":
+            if restaurant.status != "open":
+                raise serializers.ValidationError(
+                    "This restaurant is not open for reservations."
+                )
+
         else:
-            hotel = getattr(user, "hotel", None)
+            raise serializers.ValidationError("You are not allowed to reserve tables.")
 
-        if table.hotel != hotel:
-            raise serializers.ValidationError("This table does not belong to your hotel.")
-
-        # ✅ Check for overlapping reservations
-        existing = TableReservation.objects.filter(
+        # ----------------------------------
+        # CHECK OVERLAPPING RESERVATION
+        # ----------------------------------
+        exists = TableReservation.objects.filter(
             table=table,
-            reservation_date=date,
-            reservation_time=time,
-            status__in=['pending', 'confirmed']
-        )
+            reservation_date=reservation_date,
+            reservation_time=reservation_time,
+            status__in=["pending", "confirmed"],
+        ).exists()
 
-        if existing.exists():
-            raise serializers.ValidationError("This table is already reserved at this time.")
+        if exists:
+            raise serializers.ValidationError(
+                "This table is already reserved at this time."
+            )
 
         return data
 
     def create(self, validated_data):
         table = validated_data["table"]
+
         reservation = TableReservation.objects.create(**validated_data)
 
         # ✅ Mark table as reserved
@@ -386,12 +512,40 @@ class BookingCallbackSerializer(serializers.ModelSerializer):
 
 
 class TableSearchSerializer(serializers.ModelSerializer):
-    # Hotel ki details fetch karne ke liye
-    hotel_name = serializers.CharField(source='hotel.name', read_only=True)
-    hotel_city = serializers.CharField(source='hotel.city', read_only=True)
-    hotel_address = serializers.CharField(source='hotel.address', read_only=True)
-    hotel_image = serializers.ImageField(source='hotel.cover_image', read_only=True) # Agar Hotel model me image h to
+    # Restaurant details
+    restaurant_name = serializers.CharField(
+        source="restaurant.name",
+        read_only=True
+    )
+    restaurant_city = serializers.CharField(
+        source="restaurant.city",
+        read_only=True
+    )
+    restaurant_address = serializers.CharField(
+        source="restaurant.address",
+        read_only=True
+    )
+    restaurant_image = serializers.ImageField(
+        source="restaurant.cover_image",
+        read_only=True
+    )
+    restaurant_slug = serializers.CharField(
+        source="restaurant.slug",
+        read_only=True
+    )
 
     class Meta:
         model = Table
-        fields = ['id', 'number', 'capacity', 'status', 'hotel_name', 'hotel_city', 'hotel_address', 'hotel_image']
+        fields = [
+            "id",
+            "number",
+            "capacity",
+            "status",
+
+            # restaurant info
+            "restaurant_name",
+            "restaurant_slug",
+            "restaurant_city",
+            "restaurant_address",
+            "restaurant_image",
+        ]
