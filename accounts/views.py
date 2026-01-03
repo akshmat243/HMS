@@ -135,17 +135,21 @@ class RegisterView(APIView):
 
 
 class VerifyEmailView(APIView):
-    permission_classes = [AllowAny]
-    
+    permission_classes = []
+
     def get(self, request, slug):
         user = get_object_or_404(User, slug=slug)
+
         if not user.is_email_verified:
             user.is_email_verified = True
+            user.is_active = True
             user.save()
+
         return Response(
-            {"message": "Email verified successfully!"},
-            status=status.HTTP_200_OK
+            {"message": "Email verified successfully. You can now log in."},
+            status=200
         )
+
 
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
