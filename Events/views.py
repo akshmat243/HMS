@@ -25,19 +25,28 @@ class VenueViewSet(ProtectedModelViewSet):
     ordering_fields = ["capacity", "hourly_rate"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = self.queryset
         user = self.request.user
+
         if not user.is_authenticated:
             return qs.none()
+
         if user.is_superuser:
             return qs
         
-        # ADMIN → SEE ONLY THEIR VENUES
         if hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
-            return qs.filter(created_by=user)
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
 
         # NORMAL USERS → OPTIONAL RULE
-        return qs.filter(Q(is_active=True) | Q(created_by=user))
+        return qs.filter(is_active=True)
     
 
     @action(detail=True, methods=["get"], url_path="schedule")
@@ -51,13 +60,10 @@ class VenueViewSet(ProtectedModelViewSet):
         #current time
         now = timezone.now()
 
-        # Filter:
-        # 1. Venue wahi hona chahiye
-        # 2. Start time 'ab' se bada ya barabar hona chahiye (__gte = Greater Than or Equal)
         events = Event.objects.filter(
             venue=venue, 
             start_datetime__gte=now
-        ).order_by('start_datetime') # Jo event pehle aayega wo pehle dikhega
+        ).order_by('start_datetime')
 
         data = [
             {
@@ -88,16 +94,25 @@ class EventViewSet(ProtectedModelViewSet):
         return EventListSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = self.queryset
         user = self.request.user
+
         if not user.is_authenticated:
             return qs.none()
+
         if user.is_superuser:
             return qs
         
-        # staff/admin only see their created venues
         if hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
-            return qs.filter(created_by=user)
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
         
         # NORMAL USERS → ONLY EVENTS RELATED TO THEM
         return qs.filter(created_by=user)
@@ -107,17 +122,15 @@ class EventViewSet(ProtectedModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="calendar")
     def calendar(self, request):
-        """
-        Return events in a given date range for calendar view.
-        Accepts ?start=YYYY-MM-DD&end=YYYY-MM-DD
-        """
         start = request.query_params.get("start")
         end = request.query_params.get("end")
         qs = self.get_queryset()
+
         if start:
             qs = qs.filter(end_datetime__gte=start)
         if end:
             qs = qs.filter(start_datetime__lte=end)
+
         data = [
             {
                 "id": e.id,
@@ -132,61 +145,41 @@ class EventViewSet(ProtectedModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="analytical_data")
     def analytics(self, request):
-        """
-        Return aggregated data for Reports page:
-        - revenue totals
-        - counts by event type
-        - venue utilization (counts)
-        - status overview
-        """
         qs = self.get_queryset()
+
         total_revenue = qs.aggregate(total=Sum("total_price"))["total"] or 0
         pending_revenue = qs.filter(status="pending").aggregate(total=Sum("total_price"))["total"] or 0
         expected_total = total_revenue + pending_revenue
 
-        # Event types
         types = qs.values("event_type__name").annotate(count=Count("id")).order_by("-count")
-        types_list = [{"type": t["event_type__name"] or "Unknown", "count": t["count"]} for t in types]
-
-        # venue utilization (count of events per venue)
         venues = qs.values("venue__name").annotate(count=Count("id")).order_by("-count")
-        venues_list = [{"venue": v["venue__name"] or "Unknown", "count": v["count"]} for v in venues]
-
-        # status overview
         statuses = qs.values("status").annotate(count=Count("id"))
-        status_list = {s["status"]: s["count"] for s in statuses}
 
         return Response({
             "total_revenue": total_revenue,
             "pending_revenue": pending_revenue,
             "expected_total": expected_total,
-            "event_types": types_list,
-            "venue_utilization": venues_list,
-            "status_overview": status_list,
+            "event_types": [{"type": t["event_type__name"] or "Unknown", "count": t["count"]} for t in types],
+            "venue_utilization": [{"venue": v["venue__name"] or "Unknown", "count": v["count"]} for v in venues],
+            "status_overview": {s["status"]: s["count"] for s in statuses},
         }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="add-deposit")
     def add_deposit(self, request, slug=None):
-        """
-        Simple endpoint to add deposit/payment for an event.
-        """
         event = self.get_object()
-        if not request.user.is_superuser and request.user.is_staff and event.created_by != request.user:
-            return Response({"detail": "Not allowed"}, status=status.HTTP_403_FORBIDDEN)
+
         amount = request.data.get("amount")
         if not amount:
             return Response({"detail": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            amt = Decimal(str(amount))  # safe decimal conversion
+            amt = Decimal(str(amount))
         except:
             return Response({"detail": "Invalid amount format"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. Negative amount check
         if amt < 0:
             return Response({"detail": "Deposit amount cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Validate total deposit should not exceed event total_price
         new_total_deposit = (event.deposit_amount or Decimal("0")) + amt
 
         if new_total_deposit > event.total_price:
@@ -195,7 +188,6 @@ class EventViewSet(ProtectedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 3. Save deposit
         event.deposit_amount = new_total_deposit
         event.save()
 
@@ -208,21 +200,11 @@ class EventViewSet(ProtectedModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
-        """
-        Dashboard summary:
-        - total events
-        - total revenue
-        - confirmed events count
-        - total attendees (expected guests)
-        """
         qs = self.get_queryset()
 
         total_events = qs.count()
-
         total_revenue = qs.aggregate(total=models.Sum("total_price"))["total"] or 0
-
         confirmed_events = qs.filter(status="confirmed").count()
-
         total_attendees = qs.aggregate(total=models.Sum("expected_guests"))["total"] or 0
 
         return Response({
@@ -231,26 +213,6 @@ class EventViewSet(ProtectedModelViewSet):
             "confirmed_events": confirmed_events,
             "total_attendees": total_attendees,
         })
-
-
-
-# class BookingViewSet(ProtectedModelViewSet):
-#     queryset = Booking.objects.select_related("event", "user").all()
-#     serializer_class = BookingSerializer
-#     model_name = "Booking"
-
-#     def get_queryset(self):
-#         qs = super().get_queryset()
-#         user = self.request.user
-#         if not user.is_authenticated:
-#             return qs.none()
-#         if user.is_superuser:
-#             return qs
-#         if user.is_staff:
-#             # show bookings for events this admin created
-#             return qs.filter(event__created_by=user)
-#         # regular users: their own bookings
-#         return qs.filter(Q(user=user))
 
 
 class EventTypeViewSet(ProtectedModelViewSet):
@@ -262,3 +224,23 @@ class EventTypeViewSet(ProtectedModelViewSet):
     serializer_class = EventTypeSerializer
     model_name = "EventType"
     lookup_field = "slug"
+
+    def get_queryset(self):
+        qs = self.queryset
+        user = self.request.user
+
+        if user.is_superuser:
+            return qs
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "admin":
+            return qs.filter(hotel__owner=user)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "vendor":
+            if hasattr(user, "supplier_profile"):
+                return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()

@@ -6,6 +6,8 @@ from django.conf import settings
 from django.utils.text import slugify
 import uuid
 from decimal import Decimal
+from Hotel.models import Hotel
+from Restaurant.models import Restaurant
 
 User = settings.AUTH_USER_MODEL
 
@@ -26,6 +28,8 @@ class Venue(models.Model):
     hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     features = models.JSONField(default=list, blank=True)  # list of tags e.g. ["WiFi","Projector"]
     is_active = models.BooleanField(default=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='Venue_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="venues_created")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -48,6 +52,8 @@ class EventType(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=80, unique=True)
     slug = models.SlugField(max_length=100, blank=True, null=True, unique=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='event_type_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -83,6 +89,8 @@ class Event(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     deposit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # amount paid so far
     total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='event_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

@@ -33,29 +33,36 @@ from django.utils import timezone
 
 def user_is_hotel_admin(user):
     """
-    Allow if user is superuser, staff, has role 'admin', or group 'hotel_admin'.
+    Allow only:
+    - superuser (all hotels)
+    - admin (own hotel)
+    - staff (hotel related)
+    Block:
+    - vendor
+    - customer
     """
     if not user or not user.is_authenticated:
         return False
 
+    # Superuser → full access
     if getattr(user, 'is_superuser', False):
         return True
 
-    if getattr(user, 'is_staff', False):
-        return True
+    # Must have role
+    if not hasattr(user, 'role') or not user.role:
+        return False
 
-    try:
-        if hasattr(user, 'role') and user.role and getattr(user.role, 'name', '').lower() == 'admin':
-            return True
-    except Exception:
-        pass
+    role = getattr(user.role, 'name', '').lower()
 
-    if user.groups.filter(name='hotel_admin').exists():
-        return True
+    # Admin → own hotel
+    if role == 'admin':
+        return hasattr(user, 'hotel') and user.hotel is not None
 
-    if hasattr(user, 'is_hotel_admin') and getattr(user, 'is_hotel_admin'):
-        return True
+    # Staff → hotel related
+    if role == 'staff':
+        return hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None) is not None
 
+    # Vendor / Customer → NO access
     return False
 
 def _send_email(to_email, subject, body):

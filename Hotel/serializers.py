@@ -246,7 +246,6 @@ class BookingSerializer(serializers.ModelSerializer):
     )
 
     room_number = serializers.CharField(source="room.room_number", read_only=True)
-
     class Meta:
         model = Booking
         fields = '__all__'
@@ -318,14 +317,22 @@ class BookingSerializer(serializers.ModelSerializer):
             
         # ✅ Auto-generate invoice for this booking
         content_type = ContentType.objects.get_for_model(Booking)
+        guest = booking.guests.first()
+
+        customer_name = (
+            f"{guest.first_name} {guest.last_name or ''}".strip()
+            if guest else
+            booking.user.full_name or "Guest"
+            )
         invoice = Invoice.objects.create(
             content_type=content_type,
             object_id=booking.id,
             issued_to=booking.user,
-            customer_name=f"{booking.guests.first().first_name} {booking.guests.first().last_name}",
+            customer_name=customer_name,
             # days = booking.total_nights,
             total_amount=booking.room.price_per_night * booking.total_nights,
-            status='unpaid'
+            status='unpaid',
+            created_by= booking.user
         )
         InvoiceItem.objects.create(
             invoice=invoice,

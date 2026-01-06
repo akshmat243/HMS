@@ -32,10 +32,27 @@ class LeadViewSet(ProtectedModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if user.is_superuser: return qs
-        if hasattr(user, 'hotel') and user.hotel:
-            return qs.filter(hotel=user.hotel)
-        return qs.none()
+
+        if not user.is_authenticated:
+            return qs.none()
+
+        if user.is_superuser:
+            pass
+
+        # Admin / Staff → own hotel
+        elif hasattr(user, "role") and user.role and user.role.name.lower() in ["admin"]:
+            if hasattr(user, 'hotel') and user.hotel:
+                qs = qs.filter(hotel=user.hotel)
+            else:
+                return qs.none()
+            
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
+
+        # Vendor / Customer → NO access
+        else:
+            return qs.none()
 
     # 2. AUTO ASSIGN HOTEL
     def perform_create(self, serializer):
@@ -54,15 +71,27 @@ class CustomerViewSet(ProtectedModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
 
+        if not user.is_authenticated:
+            return qs.none()
+
         if user.is_superuser:
             pass
-        
-        # Check agar user ke paas hotel hai (Owner ya Staff)
-        elif hasattr(user, 'hotel') and user.hotel:
-            qs = qs.filter(hotel=user.hotel)
+
+        # Admin / Staff → own hotel
+        elif hasattr(user, "role") and user.role and user.role.name.lower() in ["admin"]:
+            if hasattr(user, 'hotel') and user.hotel:
+                qs = qs.filter(hotel=user.hotel)
+            else:
+                return qs.none()
+            
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
+
+        # Vendor / Customer → NO access
         else:
             return qs.none()
-    
+        
         # B. Search (Name, Email, Phone)
         search_query = self.request.query_params.get('search', None)
         if search_query:
@@ -501,10 +530,27 @@ class InteractionViewSet(ProtectedModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if user.is_superuser: return qs
-        if hasattr(user, 'hotel') and user.hotel:
-            return qs.filter(hotel=user.hotel)
-        return qs.none()
+
+        if not user.is_authenticated:
+            return qs.none()
+
+        if user.is_superuser:
+            pass
+
+        # Admin / Staff → own hotel
+        elif hasattr(user, "role") and user.role and user.role.name.lower() in ["admin"]:
+            if hasattr(user, 'hotel') and user.hotel:
+                qs = qs.filter(hotel=user.hotel)
+            else:
+                return qs.none()
+            
+        elif hasattr(user, "role") and user.role and user.role.name.lower() == "staff":
+            if hasattr(user, "staff_profile"):
+                return qs.filter(hotel=user.staff_profile.hotel)
+
+        # Vendor / Customer → NO access
+        else:
+            return qs.none()
 
     # 2. AUTO ASSIGN HOTEL
     def perform_create(self, serializer):

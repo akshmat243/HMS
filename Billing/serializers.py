@@ -8,6 +8,7 @@ from Hotel.models import Room
 import uuid
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
+    invoice = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = InvoiceItem
         fields = '__all__'
@@ -43,6 +44,11 @@ class InvoiceSerializer(serializers.ModelSerializer):
     balance_due = serializers.SerializerMethodField()
     #issued_to_name = serializers.SerializerMethodField()
     issued_to = serializers.CharField(source="issued_to.full_name", read_only=True)
+    created_by = serializers.CharField(
+        source="created_by.full_name",
+        read_only=True
+    )
+
 
 
     def get_balance_due(self, obj):
@@ -78,12 +84,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         invoice = Invoice.objects.create(**validated_data)
-        # total = 0
+        total = 0
         for item_data in items_data:
             item_data['invoice'] = invoice
             item = InvoiceItem.objects.create(**item_data)
             total += item.amount
-        # invoice.total_amount = total
+        invoice.total_amount = total
         invoice.save()
         return invoice
 
