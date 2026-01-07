@@ -819,43 +819,56 @@ def is_valid_uuid(value):
 
 
 class RoomViewSet(ProtectedModelViewSet):
-    queryset = Room.objects.all().select_related('hotel', 'room_category').prefetch_related('media')
+    queryset = Room.objects.all().select_related(
+        'hotel', 'room_category'
+    ).prefetch_related('media')
     serializer_class = RoomSerializer
     model_name = 'Room'
     lookup_field = 'slug'
 
     def get_queryset(self):
         user = self.request.user
+        qs = self.queryset  # IMPORTANT
 
-        # 1. Superuser: Sees everything
+        # 1️⃣ Superuser → all rooms
         if user.is_superuser:
-            return Hotel.objects.all()
+            return qs
 
-        # Admin → rooms only from their hotel
-        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
-            return qs.filter(hotel=user.hotel)
-        
-            # ✅ Vendor → rooms of linked hotels
-        if hasattr(user, 'role') and user.role.name.lower() == 'vendor':
+        role = getattr(user, "role", None)
+        role_name = role.name.lower() if role else None
+
+        # 2️⃣ Admin → rooms of own hotel
+        if role_name == "admin":
+            hotel = getattr(user, "hotel", None)
+            if hotel:
+                return qs.filter(hotel=hotel)
+            return qs.none()
+
+        # 3️⃣ Staff → rooms of assigned hotel
+        if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        # 4️⃣ Vendor → rooms of linked hotels
+        if role_name == "vendor":
             return qs.filter(hotel__vendors__user=user)
-        if hasattr(user, 'role') and user.role.name.lower() == 'customer':
-            hotel_slug = self.request.query_params.get('hotel')
+
+        # 5️⃣ Customer → available rooms (optionally filtered by hotel)
+        if role_name == "customer":
+            hotel_slug = self.request.query_params.get("hotel")
 
             qs = qs.filter(
-                status='available',
-                # is_available=True,
-                hotel__status='available'
+                status="available",
+                hotel__status="available"
             )
 
             if hotel_slug:
                 qs = qs.filter(hotel__slug=hotel_slug)
 
             return qs
-        # Staff → rooms only from their hotel
-        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
-            return Hotel.objects.filter(id=user.staff_profile.hotel.id)
 
-        return Hotel.objects.none()
+        # 6️⃣ Default → no access
+        return qs.none()
+
 
 
     def perform_create(self, serializer):
