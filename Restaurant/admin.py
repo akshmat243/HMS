@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, DiscountRule, Restaurant, BookingCallback
+from .models import MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, DiscountRule, Restaurant, BookingCallback, RestaurantMedia
 
 @admin.register(Restaurant)
 class RestaurantAdmin(admin.ModelAdmin):
@@ -92,3 +92,27 @@ class BookinCallbackAdmin(admin.ModelAdmin):
     'is_resolved',)
     list_filter = ('is_resolved',)
     search_fields = ('restaurant_name',)
+
+
+@admin.register(RestaurantMedia)
+class RestaurantMediaAdmin(admin.ModelAdmin):
+    list_display = (
+        'restaurant',
+        'media_type',
+        'caption',
+        'created_at',
+    )
+
+    list_filter = (
+        'media_type',
+        'created_at',
+    )
+
+    search_fields = (
+        'restaurant__name',
+        'caption',
+    )
+
+    readonly_fields = ('created_at',)
+
+    ordering = ('-created_at',)

@@ -10,6 +10,7 @@ from .views import (
     DownloadAndroidAppView, 
     DownloadIOSAppView,
     PackageViewSet,
+    HotelMediaViewSet
     # HomeDashboardViewSet
     # RoomMediaViewSet
 )
@@ -21,6 +22,7 @@ router.register('rooms', RoomViewSet)
 router.register('bookings', BookingViewSet)
 router.register('room-service-requests', RoomServiceRequestViewSet)
 router.register(r'packages', PackageViewSet, basename='packages')
+router.register(r'hotel-media',HotelMediaViewSet, basename='hotel-media')
 # router.register(r'dashboard-unified', HomeDashboardViewSet, basename='home-dashboard')
 # router.register(r'room-media', RoomMediaViewSet, basename='room-media')
 

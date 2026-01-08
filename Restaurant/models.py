@@ -408,3 +408,46 @@ class BookingCallback(models.Model):
             base = f"{self.restaurant_name}-{uuid.uuid4().hex[:6]}"
             self.slug = slugify(base)
         super().save(*args, **kwargs)
+
+import uuid
+from django.db import models
+from django.utils.text import slugify
+
+
+class RestaurantMedia(models.Model):
+    RESTAURANT_MEDIA_TYPE = [
+        ('image', 'Image'),
+        ('video', 'Video'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.CASCADE,
+        related_name='media'
+    )
+
+    slug = models.SlugField(unique=True, blank=True)
+
+    file = models.FileField(upload_to='Restaurant/media/')
+    media_type = models.CharField(
+        max_length=10,
+        choices=RESTAURANT_MEDIA_TYPE,
+        default='image'
+    )
+    caption = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.media_type.capitalize()} for {self.restaurant.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(f"{self.restaurant.name}-{self.media_type}")
+            unique_slug = base_slug
+            counter = 1
+
+            while RestaurantMedia.objects.filter(slug=unique_slug).exists():
+                unique_slug = f"{base_slug}-{counter}"

@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     MenuCategoryViewSet, MenuItemViewSet, TableViewSet,
-    RestaurantOrderViewSet, OrderItemViewSet, RestaurantDashboardViewSet, TableReservationViewSet,RestaurantViewSet,BookingCallbackView,PublicTableSearchView )
+    RestaurantOrderViewSet, OrderItemViewSet, RestaurantDashboardViewSet, TableReservationViewSet,RestaurantViewSet,BookingCallbackView,PublicTableSearchView, RestaurantMediaViewSet )
 
 
 router = DefaultRouter()
@@ -14,6 +14,7 @@ router.register(r'restaurant-orders', RestaurantOrderViewSet)
 router.register(r'order-items', OrderItemViewSet)
 router.register(r'dashboard', RestaurantDashboardViewSet, basename='restaurant-dashboard')
 router.register(r'table-reservations', TableReservationViewSet, basename='table-reservations')
+router.register(r'restaurant-media', RestaurantMediaViewSet, basename='restaurant-media')
 
 
 urlpatterns = [
