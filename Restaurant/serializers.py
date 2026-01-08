@@ -6,6 +6,7 @@ from .models import (
     MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant
 )
 from Hotel.models import Hotel
+from Hotel.utils import ensure_module
 from django.core.validators import RegexValidator
 
 from django.contrib.auth import get_user_model
@@ -36,6 +37,8 @@ class RestaurantSerializer(serializers.ModelSerializer):
 
         if Restaurant.objects.filter(owner=owner).exists():
             raise serializers.ValidationError({'owner_slug': 'This admin already owns a Restaurant'})
+        
+        ensure_module(owner, "restaurant")
 
         restaurant = Restaurant.objects.create(owner=owner, **validated_data)
         return restaurant
