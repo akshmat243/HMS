@@ -330,135 +330,246 @@ class HotelViewSet(ProtectedModelViewSet):
         return f"{sign}{abs(round(change, 1))}%"
     
 
-    # --- DASHBOARD API : TOP CARDS ---
     @action(detail=False, methods=['get'], url_path='dashboard/stats-cards')
     def dashboard_stats_cards(self, request):
         user = request.user
-        target_hotel = self._get_dashboard_target_hotel(request)
-        
-        # Security Check
-        if not user.is_superuser and not target_hotel:
-            return Response({"error": "No hotel assigned."}, status=403)
+        context = request.query_params.get("context")  # hotel | restaurant
+        slug = request.query_params.get("slug")
+
+        if not context or not slug:
+            return Response(
+                {"error": "context and slug are required"},
+                status=400
+            )
 
         today = timezone.localdate()
         yesterday = today - timedelta(days=1)
 
-        # 1. TOTAL REVENUE (Bookings + Restaurant | Status: Paid)
-        booking_ct = ContentType.objects.get_for_model(Booking)
-        order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+        # ------------------------------------------------
+        # HOTEL DASHBOARD
+        # ------------------------------------------------
+        if context == "hotel":
+            try:
+                hotel = Hotel.objects.get(slug=slug)
+            except Hotel.DoesNotExist:
+                return Response({"error": "Invalid hotel"}, status=404)
 
-        def get_revenue(date_val):
-            qs = Invoice.objects.filter(status='paid', issued_at__date=date_val)
-            if target_hotel:
-                b_ids = Booking.objects.filter(hotel=target_hotel).values_list('id', flat=True)
-                r_ids = RestaurantOrder.objects.filter(hotel=target_hotel).values_list('id', flat=True)
-                qs = qs.filter(
-                    Q(content_type=booking_ct, object_id__in=b_ids) |
-                    Q(content_type=order_ct, object_id__in=r_ids)
-                )
-            return qs.aggregate(total=Sum('total_amount'))['total'] or 0
+            if not (user.is_superuser or hotel.owner == user):
+                return Response({"error": "Unauthorized"}, status=403)
 
-        rev_today = get_revenue(today)
-        rev_yesterday = get_revenue(yesterday)
+            # ---------- Revenue (Bookings only) ----------
+            booking_ct = ContentType.objects.get_for_model(Booking)
 
-        # 2. ROOM OCCUPANCY
-        room_qs = Room.objects.all()
-        if target_hotel: room_qs = room_qs.filter(hotel=target_hotel)
-        total_rooms = room_qs.count()
-        
-        # Today (Live)
-        occ_today = room_qs.filter(status__in=['occupied', 'reserved']).count()
-        
-        # Yesterday (Active Bookings)
-        b_qs = Booking.objects.filter(status__in=['checked_in', 'checked_out', 'confirmed'])
-        if target_hotel: b_qs = b_qs.filter(hotel=target_hotel)
-        occ_yesterday = b_qs.filter(check_in__lte=yesterday, check_out__gt=yesterday).count()
+            def get_booking_revenue(date_val):
+                b_ids = Booking.objects.filter(
+                    hotel=hotel
+                ).values_list("id", flat=True)
 
-        pct_today = (occ_today / total_rooms * 100) if total_rooms else 0
-        pct_yesterday = (occ_yesterday / total_rooms * 100) if total_rooms else 0
+                return Invoice.objects.filter(
+                    status="paid",
+                    issued_at__date=date_val,
+                    content_type=booking_ct,
+                    object_id__in=b_ids
+                ).aggregate(total=Sum("total_amount"))["total"] or 0
 
-        # 3. ACTIVE ORDERS (Pending/Preparing)
-        o_qs = RestaurantOrder.objects.all()
-        if target_hotel: o_qs = o_qs.filter(hotel=target_hotel)
-        
-        active_now = o_qs.filter(status__in=['pending', 'preparing']).count()
-        created_today = o_qs.filter(order_time__date=today).count()
-        created_yesterday = o_qs.filter(order_time__date=yesterday).count()
+            rev_today = get_booking_revenue(today)
+            rev_yesterday = get_booking_revenue(yesterday)
 
-        # 4. TOTAL GUESTS
-        g_qs = Booking.objects.filter(status='checked_in')
-        if target_hotel: g_qs = g_qs.filter(hotel=target_hotel)
-        guests_now = g_qs.aggregate(total=Sum('guests_count'))['total'] or 0
-        
-        g_y_qs = Booking.objects.filter(
-            status__in=['checked_in', 'checked_out', 'confirmed'],
-            check_in__lte=yesterday, check_out__gt=yesterday
-        )
-        if target_hotel: g_y_qs = g_y_qs.filter(hotel=target_hotel)
-        guests_yesterday = g_y_qs.aggregate(total=Sum('guests_count'))['total'] or 0
+            # ---------- Room Occupancy ----------
+            room_qs = Room.objects.filter(hotel=hotel)
+            total_rooms = room_qs.count()
 
-        return Response({
-            "revenue": {
-                "value": float(rev_today),
-                "growth": self._calculate_growth(rev_today, rev_yesterday)
-            },
-            "room_occupancy": {
-                "value": f"{round(pct_today)}%",
-                "growth": self._calculate_growth(pct_today, pct_yesterday)
-            },
-            "active_orders": {
-                "value": active_now,
-                "growth": self._calculate_growth(created_today, created_yesterday)
-            },
-            "total_guests": {
-                "value": guests_now,
-                "growth": self._calculate_growth(guests_now, guests_yesterday)
-            }
-        })
+            occ_today = room_qs.filter(
+                status__in=["occupied", "reserved"]
+            ).count()
+
+            b_qs = Booking.objects.filter(
+                hotel=hotel,
+                status__in=["checked_in", "checked_out", "confirmed"],
+                check_in__lte=yesterday,
+                check_out__gt=yesterday
+            )
+            occ_yesterday = b_qs.count()
+
+            pct_today = (occ_today / total_rooms * 100) if total_rooms else 0
+            pct_yesterday = (occ_yesterday / total_rooms * 100) if total_rooms else 0
+
+            # ---------- Guests ----------
+            guests_now = Booking.objects.filter(
+                hotel=hotel,
+                status="checked_in"
+            ).aggregate(total=Sum("guests_count"))["total"] or 0
+
+            guests_yesterday = Booking.objects.filter(
+                hotel=hotel,
+                status__in=["checked_in", "checked_out", "confirmed"],
+                check_in__lte=yesterday,
+                check_out__gt=yesterday
+            ).aggregate(total=Sum("guests_count"))["total"] or 0
+
+            return Response({
+                "revenue": {
+                    "value": float(rev_today),
+                    "growth": self._calculate_growth(rev_today, rev_yesterday)
+                },
+                "room_occupancy": {
+                    "value": f"{round(pct_today)}%",
+                    "growth": self._calculate_growth(pct_today, pct_yesterday)
+                },
+                "total_guests": {
+                    "value": guests_now,
+                    "growth": self._calculate_growth(guests_now, guests_yesterday)
+                }
+            })
+
+        # ------------------------------------------------
+        # RESTAURANT DASHBOARD
+        # ------------------------------------------------
+        if context == "restaurant":
+            try:
+                restaurant = Restaurant.objects.get(slug=slug)
+            except Restaurant.DoesNotExist:
+                return Response({"error": "Invalid restaurant"}, status=404)
+
+            if not (user.is_superuser or restaurant.owner == user):
+                return Response({"error": "Unauthorized"}, status=403)
+
+            order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+
+            def get_restaurant_revenue(date_val):
+                o_ids = RestaurantOrder.objects.filter(
+                    table__restaurant=restaurant
+                ).values_list("id", flat=True)
+
+                return Invoice.objects.filter(
+                    status="paid",
+                    issued_at__date=date_val,
+                    content_type=order_ct,
+                    object_id__in=o_ids
+                ).aggregate(total=Sum("total_amount"))["total"] or 0
+
+            rev_today = get_restaurant_revenue(today)
+            rev_yesterday = get_restaurant_revenue(yesterday)
+
+            orders_today = RestaurantOrder.objects.filter(
+                table__restaurant=restaurant,
+                order_time__date=today
+            )
+
+            active_orders = orders_today.filter(
+                status__in=["pending", "preparing"]
+            ).count()
+
+            created_yesterday = RestaurantOrder.objects.filter(
+                table__restaurant=restaurant,
+                order_time__date=yesterday
+            ).count()
+
+            return Response({
+                "revenue": {
+                    "value": float(rev_today),
+                    "growth": self._calculate_growth(rev_today, rev_yesterday)
+                },
+                "active_orders": {
+                    "value": active_orders,
+                    "growth": self._calculate_growth(
+                        orders_today.count(),
+                        created_yesterday
+                    )
+                }
+            })
+
+        return Response({"error": "Invalid context"}, status=400)
+
 
 
     # --- DASHBOARD API : TODAY SUMMARY ---
     @action(detail=False, methods=['get'], url_path='dashboard/today-summary')
     def dashboard_today_summary(self, request):
         user = request.user
-        target_hotel = self._get_dashboard_target_hotel(request)
+        context = request.query_params.get("context")  # hotel | restaurant
+        slug = request.query_params.get("slug")
         today = timezone.localdate()
 
-        if not user.is_superuser and not target_hotel:
-            return Response({"error": "No hotel assigned."}, status=403)
-
-        b_qs = Booking.objects.all()
-        o_qs = RestaurantOrder.objects.all()
-        if target_hotel:
-            b_qs = b_qs.filter(hotel=target_hotel)
-            o_qs = o_qs.filter(hotel=target_hotel)
-
-        # 1. Counts
-        check_ins = b_qs.filter(check_in=today).count()
-        check_outs = b_qs.filter(check_out=today).count()
-        food_orders = o_qs.filter(order_time__date=today, status__in=['served', 'preparing', 'completed']).count()
-
-        # 2. Revenue Today
-        booking_ct = ContentType.objects.get_for_model(Booking)
-        order_ct = ContentType.objects.get_for_model(RestaurantOrder)
-        
-        b_ids = b_qs.values_list('id', flat=True)
-        r_ids = o_qs.values_list('id', flat=True)
-        
-        rev_qs = Invoice.objects.filter(status='paid', issued_at__date=today)
-        if target_hotel:
-            rev_qs = rev_qs.filter(
-                Q(content_type=booking_ct, object_id__in=b_ids) |
-                Q(content_type=order_ct, object_id__in=r_ids)
+        if not context or not slug:
+            return Response(
+                {"error": "context and slug are required"},
+                status=400
             )
-        revenue = rev_qs.aggregate(total=Sum('total_amount'))['total'] or 0
 
-        return Response({
-            "check_ins": check_ins,
-            "check_outs": check_outs,
-            "food_orders": food_orders,
-            "revenue": float(revenue)
-        })
+        # --------------------------------
+        # HOTEL DASHBOARD
+        # --------------------------------
+        if context == "hotel":
+            try:
+                hotel = Hotel.objects.get(slug=slug)
+            except Hotel.DoesNotExist:
+                return Response({"error": "Invalid hotel"}, status=404)
+
+            if not (user.is_superuser or hotel.owner == user):
+                return Response({"error": "Unauthorized"}, status=403)
+
+            bookings = Booking.objects.filter(hotel=hotel)
+
+            check_ins = bookings.filter(check_in=today).count()
+            check_outs = bookings.filter(check_out=today).count()
+
+            booking_ct = ContentType.objects.get_for_model(Booking)
+            booking_ids = bookings.values_list("id", flat=True)
+
+            revenue = Invoice.objects.filter(
+                content_type=booking_ct,
+                object_id__in=booking_ids,
+                status="paid",
+                issued_at__date=today
+            ).aggregate(total=Sum("total_amount"))["total"] or 0
+
+            return Response({
+                "context": "hotel",
+                "check_ins": check_ins,
+                "check_outs": check_outs,
+                "revenue": float(revenue),
+            })
+
+        # --------------------------------
+        # RESTAURANT DASHBOARD
+        # --------------------------------
+        if context == "restaurant":
+            try:
+                restaurant = Restaurant.objects.get(slug=slug)
+            except Restaurant.DoesNotExist:
+                return Response({"error": "Invalid restaurant"}, status=404)
+
+            if not (user.is_superuser or restaurant.owner == user):
+                return Response({"error": "Unauthorized"}, status=403)
+
+            orders = RestaurantOrder.objects.filter(
+                table__restaurant=restaurant
+            )
+
+            food_orders = orders.filter(
+                order_time__date=today,
+                status__in=["served", "preparing", "completed"]
+            ).count()
+
+            order_ct = ContentType.objects.get_for_model(RestaurantOrder)
+            order_ids = orders.values_list("id", flat=True)
+
+            revenue = Invoice.objects.filter(
+                content_type=order_ct,
+                object_id__in=order_ids,
+                status="paid",
+                issued_at__date=today
+            ).aggregate(total=Sum("total_amount"))["total"] or 0
+
+            return Response({
+                "context": "restaurant",
+                "food_orders": food_orders,
+                "revenue": float(revenue),
+            })
+
+        return Response({"error": "Invalid context"}, status=400)
+
     
     @action(detail=False, methods=['get'], url_path='dashboard/recent-activities')
     def recent_activities(self, request):
@@ -828,7 +939,7 @@ class RoomViewSet(ProtectedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = self.queryset  # IMPORTANT
+        qs = self.queryset  #  IMPORTANT
 
         # 1️⃣ Superuser → all rooms
         if user.is_superuser:

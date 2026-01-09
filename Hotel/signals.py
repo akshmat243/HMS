@@ -1,4 +1,4 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from accounts.models import User, UserModule
 from Hotel.models import Hotel
@@ -40,3 +40,9 @@ def create_admin_business_units(sender, instance, created, **kwargs):
             }
         )
 
+@receiver(post_delete, sender=Hotel)
+def disable_hotel_module(sender, instance, **kwargs):
+    UserModule.objects.filter(
+        user=instance.owner,
+        module="hotel"
+    ).update(is_active=False)

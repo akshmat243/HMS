@@ -1,7 +1,8 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
-from .models import RestaurantOrder
+from .models import RestaurantOrder, Restaurant
+from accounts.models import User, UserModule
 from Billing.models import Invoice, InvoiceItem
 
 @receiver(post_save, sender=RestaurantOrder)
@@ -44,3 +45,11 @@ def manage_restaurant_invoice(sender, instance, created, **kwargs):
                 quantity=item.quantity,
                 unit_price=item.price
             )
+            
+
+@receiver(post_delete, sender=Restaurant)
+def disable_restaurant_module(sender, instance, **kwargs):
+    UserModule.objects.filter(
+        user=instance.owner,
+        module="restaurant"
+    ).update(is_active=False)

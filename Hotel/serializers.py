@@ -4,6 +4,7 @@ from django.db.models import Min, Avg, Count
 from Restaurant.models import Restaurant
 from django.utils import timezone
 from django.db.models.functions import Coalesce
+from .utils import ensure_module
 
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -34,6 +35,8 @@ class HotelSerializer(serializers.ModelSerializer):
 
         if Hotel.objects.filter(owner=owner).exists():
             raise serializers.ValidationError({'owner_slug': 'This admin already owns a hotel'})
+        
+        ensure_module(owner, "hotel")
 
         hotel = Hotel.objects.create(owner=owner, **validated_data)
         return hotel
