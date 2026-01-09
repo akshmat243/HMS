@@ -95,7 +95,7 @@ class RoomSerializer(serializers.ModelSerializer):
         source='hotel',
         slug_field='slug',
         queryset=Hotel.objects.all(),
-        required=False,
+        write_only=True,
         allow_null=True
     )
     
@@ -105,6 +105,8 @@ class RoomSerializer(serializers.ModelSerializer):
     )
     max_occupancy = serializers.SerializerMethodField()
 
+    room_number = serializers.CharField(read_only=True)
+
     class Meta:
         model = Room
         fields = [
@@ -112,7 +114,7 @@ class RoomSerializer(serializers.ModelSerializer):
             'floor', 'is_available', 'status', 'price_per_night', 'amenities',
             'bed_type', 'room_size', 'view', 'description', 'media', 'max_occupancy'
         ]
-        read_only_fields = ['slug']
+        read_only_fields = ['slug', 'room_number']
     
     def get_max_occupancy(self, obj):
         return obj.room_category.max_occupancy if obj.room_category else None

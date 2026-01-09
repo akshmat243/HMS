@@ -23,7 +23,7 @@ def manage_restaurant_invoice(sender, instance, created, **kwargs):
                 "customer_name": instance.guest_name,
                 "total_amount": instance.grand_total,
                 "status": "unpaid",
-                "issued_to": instance.hotel.owner 
+                "issued_to": instance.restaurant.owner 
             }
         )
 
