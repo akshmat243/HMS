@@ -10,13 +10,24 @@ User = get_user_model()
 @receiver(post_save, sender=Invoice)
 def update_purchase_order_payment_status(sender, instance, **kwargs):
     """Sync invoice payment status with purchase order."""
-    if instance.content_type.model == 'purchaseorder':
-        try:
-            order = instance.content_type.get_object_for_this_type(id=instance.object_id)
-            order.payment_status = instance.status
-            order.save()
-        except PurchaseOrder.DoesNotExist:
-            pass
+
+    # Manual invoice → kuch nahi karna
+    if not instance.content_type:
+        return
+
+    # Sirf PurchaseOrder linked invoice ke liye
+    if instance.content_type.model != 'purchaseorder':
+        return
+
+    try:
+        order = instance.content_type.get_object_for_this_type(
+            id=instance.object_id
+        )
+        order.payment_status = instance.status
+        order.save(update_fields=["payment_status"])
+
+    except PurchaseOrder.DoesNotExist:
+        pass
 
 @receiver(post_save, sender=Supplier)
 def create_supplier_user(sender, instance, created, **kwargs):

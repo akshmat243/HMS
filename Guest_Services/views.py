@@ -7,12 +7,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from Hotel.models import Booking
 from django.db.models import Count, Sum, Avg
-# from django.contrib.auth import get_user_model
-# User= get_user_model()
-# created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_maintenance_tasks')
+from django.contrib.auth import get_user_model
+from rest_framework.exceptions import ValidationError
 
 
-
+# =================================================
+# SERVICE CATEGORY VIEWSET
+# =================================================
 class ServiceCategoryViewSet(ProtectedModelViewSet):
     queryset = ServiceCategory.objects.all()
     serializer_class = ServiceCategorySerializer
@@ -22,18 +23,31 @@ class ServiceCategoryViewSet(ProtectedModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
-
     def get_queryset(self):
         user = self.request.user
-        
+        qs = super().get_queryset()
+
         if user.is_superuser:
-            return self.queryset
+            return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == "admin":
-            return self.queryset.filter(created_by=user)
+        role = getattr(user.role, "name", "").lower()
 
-        return self.queryset.none()
+        if role == "admin":
+            return qs.filter(hotel__owner=user)
 
+        if role == "vendor" and hasattr(user, "supplier_profile"):
+            return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if role == "staff" and hasattr(user, "staff_profile"):
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        # Customers cannot view service categories
+        return qs.none()
+
+
+# =================================================
+# GUEST SERVICE VIEWSET
+# =================================================
 class GuestServiceViewSet(ProtectedModelViewSet):
     queryset = GuestService.objects.select_related("category").all()
     serializer_class = GuestServiceSerializer
@@ -43,43 +57,62 @@ class GuestServiceViewSet(ProtectedModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
-
-
-
     def get_queryset(self):
-        qs = super().get_queryset()
-
-        # Admins see only their created services (optional)
         user = self.request.user
+        qs = super().get_queryset()
 
         if user.is_superuser:
             return qs
 
-        if hasattr(user, 'role') and user.role and user.role.name.lower() == "admin":
-            return qs.filter(created_by=user)
+        role = getattr(user.role, "name", "").lower()
 
+        if role == "admin":
+            return qs.filter(hotel__owner=user)
+
+        if role == "vendor" and hasattr(user, "supplier_profile"):
+            return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if role == "staff" and hasattr(user, "staff_profile"):
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        # Customers cannot view guest services list
         return qs.none()
 
 
-
-
+# =================================================
+# SERVICE REQUEST VIEWSET
+# =================================================
 class ServiceRequestViewSet(ProtectedModelViewSet):
+    queryset = ServiceRequest.objects.all()
     serializer_class = ServiceRequestSerializer
     model_name = "ServiceRequest"
     lookup_field = "slug"
 
-
     def get_queryset(self):
         user = self.request.user
-        base_qs = ServiceRequest.objects.all().order_by("-created_at")
-        
+        qs = self.queryset.order_by("-created_at")
+
         if user.is_superuser:
-            return base_qs
+            return qs
 
-        if hasattr(user, 'role') and user.role.name.lower() == "admin":
-            return base_qs.filter(created_by=user)
+        role = getattr(user.role, "name", "").lower()
 
-        return base_qs.none()
+        if role == "admin":
+            return qs.filter(hotel__owner=user)
+
+        if role == "vendor" and hasattr(user, "supplier_profile"):
+            return qs.filter(hotel=user.supplier_profile.hotel)
+
+        if role == "staff" and hasattr(user, "staff_profile"):
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        if role == "customer":
+            return qs.filter(
+                booking__guests__user=user,
+                booking__status__in=["confirmed", "checked_in"]
+            ).distinct()
+
+        return qs.none()
 
     @action(detail=True, methods=["post"])
     def assign(self, request, slug=None):
@@ -89,11 +122,11 @@ class ServiceRequestViewSet(ProtectedModelViewSet):
         if not staff_email:
             return Response({"error": "assigned_to is required"}, status=400)
 
-        user = get_user_model().objects.filter(email=staff_email).first()
-        if not user:
+        staff = get_user_model().objects.filter(email=staff_email).first()
+        if not staff:
             return Response({"error": "User not found"}, status=404)
 
-        instance.assigned_to = user
+        instance.assigned_to = staff
         instance.status = "in_progress"
         instance.save()
 
@@ -105,40 +138,52 @@ class ServiceRequestViewSet(ProtectedModelViewSet):
         instance.status = "completed"
         instance.save()
         return Response(ServiceRequestSerializer(instance).data)
-    
+
     def perform_create(self, serializer):
         booking = serializer.validated_data["booking"]
 
         if booking.status not in ["checked_in", "confirmed"]:
-            return Response(
-                {"booking": ["Guest stay is not active. Cannot create service request."]},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            raise ValidationError({"booking": "Guest stay is not active. Cannot create service request."})
 
-        # Fetch primary guest (the first guest linked with this booking)
         guest_obj = booking.guests.first()
-        guest_name = f"{guest_obj.first_name} {guest_obj.last_name or ''}".strip()
+        guest_name = f"{guest_obj.first_name} {guest_obj.last_name or ''}".strip() if guest_obj else "Guest"
 
         serializer.save(
             guest_name=guest_name,
             guest_room=str(booking.room.room_number),
             status="pending",
             assigned_to=None,
-            created_by=self.request.user  
+            created_by=self.request.user
         )
 
 
+# =================================================
+# GUEST PROFILE API
+# =================================================
 class GuestProfileListAPIView(APIView):
     def get(self, request):
         user = request.user
+        role = getattr(user.role, "name", "").lower()
 
         if user.is_superuser:
             bookings = Booking.objects.filter(status__in=["confirmed", "checked_in"])
-        else:
+        elif role == "admin":
             bookings = Booking.objects.filter(
                 status__in=["confirmed", "checked_in"],
-                hotel=user.hotel
+                room__hotel__owner=user
             )
+        elif role == "vendor" and hasattr(user, "supplier_profile"):
+            bookings = Booking.objects.filter(
+                status__in=["confirmed", "checked_in"],
+                room__hotel=user.supplier_profile.hotel
+            )
+        elif role == "staff" and hasattr(user, "staff_profile"):
+            bookings = Booking.objects.filter(
+                status__in=["confirmed", "checked_in"],
+                room__hotel=user.staff_profile.hotel
+            )
+        else:
+            return Response([], status=200)  # Customers can't see dashboard
 
         profiles = []
 
@@ -147,155 +192,69 @@ class GuestProfileListAPIView(APIView):
             if not guest:
                 continue
 
-            #fetch all services requested by this guest
-            service_requests = booking.service_requests.all()
-
-            # Calculate preferences from categories used
+            service_requests = booking.service_requests.select_related("category")
             preferences = set()
 
-            # for req in service_requests:
-            #     category = ServiceCategory.objects.filter(name=req.category).first()
-            #     if category:
-            #         for tag in category.preference_tags:
-            #             preferences.add(tag)
-
             for req in service_requests:
-                category = req.category  # Direct FK reference
+                if req.category and req.category.preference_tags:
+                    preferences.update(req.category.preference_tags)
 
-                if category and category.preference_tags:
-                    for tag in category.preference_tags:
-                        preferences.add(tag)
-
-            # Total amount spent by guest
-            total_spent = sum([req.cost for req in service_requests])
-
-            # Satisfaction rating
             ratings = [req.rating for req in service_requests if req.rating]
-            satisfaction = sum(ratings)/len(ratings) if ratings else 0
+            satisfaction = round(sum(ratings) / len(ratings), 2) if ratings else 0
 
             profiles.append({
                 "guest_name": f"{guest.first_name} {guest.last_name or ''}".strip(),
                 "room_number": booking.room.room_number,
                 "check_in": booking.check_in,
                 "check_out": booking.check_out,
-                "total_spent": total_spent,
+                "total_spent": sum(req.cost for req in service_requests),
                 "satisfaction": satisfaction,
                 "preferences": list(preferences),
                 "booking_code": booking.booking_code,
                 "booking_slug": booking.slug,
             })
 
-        serializer = GuestProfileSerializer(profiles, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(GuestProfileSerializer(profiles, many=True).data)
 
 
-
-
+# =================================================
+# ANALYTICS + SUMMARY API
+# =================================================
 class ServiceAnalyticsAPIView(APIView):
-
     def get(self, request):
         user = request.user
+
         if user.is_superuser:
-            requests = ServiceRequest.objects.all()
+            qs = ServiceRequest.objects.all()
         else:
-            requests = ServiceRequest.objects.filter(created_by=user)
+            qs = ServiceRequest.objects.filter(created_by=user)
 
+        total = qs.count() or 1
 
-        total_requests = requests.count() or 1  # avoid zero division
-
-
-        # 1. REQUEST TYPES SUMMARY
-
-        request_types = (
-            requests.values("category")
-            .annotate(count=Count("id"))
-            .order_by("category")
-        )
-
-        request_type_data = []
-        for obj in request_types:
-            request_type_data.append({
-                "category": obj["category"],
-                "count": obj["count"],
-                "percentage": round((obj["count"] / total_requests) * 100, 1)
-            })
-
-
-        # 2. STATUS DISTRIBUTION
-
-        status_data = []
-        status_types = ["pending", "in_progress", "completed", "cancelled"]
-
-        for status_name in status_types:
-            count = requests.filter(status=status_name).count()
-            status_data.append({
-                "status": status_name,
-                "count": count,
-                "percentage": round((count / total_requests) * 100, 1)
-            })
-
-
-        # 3. REVENUE STATISTICS
-
-        total_revenue = requests.aggregate(total=Sum("cost"))["total"] or 0
-        avg_per_request = round(total_revenue / total_requests, 2)
-        completion_rate = round(
-            (requests.filter(status="completed").count() / total_requests) * 100, 1
-        )
-
-        # 4. GUEST SATISFACTION
-
-        avg_rating = requests.aggregate(avg=Avg("rating"))["avg"] or 0
-
-        vip_guests = requests.values("booking__guests__id").distinct().count()
-
-        total_guest_spending = total_revenue  # based on all services
-
-        # FINAL RETURN DATA
         analytics = {
-            "request_types": request_type_data,
-            "status_distribution": status_data,
+            "request_types": list(qs.values("category__name").annotate(count=Count("id"))),
+            "status_distribution": [
+                {"status": st, "count": qs.filter(status=st).count()}
+                for st in ["pending", "in_progress", "completed", "cancelled"]
+            ],
             "revenue": {
-                "total_revenue": total_revenue,
-                "average_per_request": avg_per_request,
-                "completion_rate": completion_rate
-            },
-            "guest_satisfaction": {
-                "average_rating": round(avg_rating, 2),
-                "vip_guests": vip_guests,
-                "total_guest_spending": total_guest_spending
+                "total_revenue": (qs.aggregate(Sum("cost"))["cost__sum"] or 0),
+                "avg_per_request": round((qs.aggregate(Sum("cost"))["cost__sum"] or 1) / total, 2)
             }
         }
 
         return Response(analytics)
 
 
-
-
 class ServiceSummaryAPIView(APIView):
-    """
-    Summary API for Guest Services Dashboard
-    Shows total requests, pending, completed, and revenue.
-    """
     def get(self, request):
         user = request.user
-        if user.is_superuser:
-            queryset = ServiceRequest.objects.all()
-        else:
-            queryset = ServiceRequest.objects.filter(created_by=user)
-
-
-        total_requests = queryset.count()
-        pending = queryset.filter(status="pending").count()
-        completed = queryset.filter(status="completed").count()
-
-        total_revenue = queryset.aggregate(total=Sum("cost"))["total"] or 0
+        qs = ServiceRequest.objects.all() if user.is_superuser else ServiceRequest.objects.filter(created_by=user)
 
         data = {
-            "total_requests": total_requests,
-            "pending": pending,
-            "completed": completed,
-            "total_revenue": total_revenue,
+            "total_requests": qs.count(),
+            "pending": qs.filter(status="pending").count(),
+            "completed": qs.filter(status="completed").count(),
+            "total_revenue": qs.aggregate(Sum("cost"))["cost__sum"] or 0,
         }
-
         return Response(data)

@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from Billing.models import Invoice, InvoiceItem
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant, RestaurantMedia
 )
 from Hotel.models import Hotel
 from Hotel.utils import ensure_module
@@ -552,3 +552,55 @@ class TableSearchSerializer(serializers.ModelSerializer):
             "restaurant_address",
             "restaurant_image",
         ]
+
+class RestaurantMediaSerializer(serializers.ModelSerializer):
+    restaurant = serializers.SlugRelatedField(
+        slug_field='slug',
+        queryset=Restaurant.objects.all()
+    )
+
+    restaurant_name = serializers.CharField(
+        source='restaurant.name',
+        read_only=True
+    )
+
+    file = serializers.FileField(required=False)
+    
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = RestaurantMedia
+        fields = [
+            'id',
+            'restaurant',
+            'restaurant_name',
+            'slug',
+            'file',
+            'files',
+            'media_type',
+            'caption',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'slug', 'created_at']
+
+    def create(self, validated_data):
+        files = validated_data.pop('files', None)
+
+        # SINGLE FILE
+        if not files:
+            return super().create(validated_data)
+
+        # MULTIPLE FILES
+        media_objects = []
+        for file in files:
+            media = RestaurantMedia.objects.create(
+                file=file,
+                **validated_data
+            )
+            media_objects.append(media)
+
+        return media_objects

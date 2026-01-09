@@ -687,3 +687,46 @@ class Package(models.Model):
 
     def __str__(self):
         return f"{self.name} - ₹{self.price}/{self.price_unit}"
+
+class HotelMedia(models.Model):
+    HOTEL_MEDIA_TYPE = [
+        ('image', 'Image'),
+        ('video', 'Video'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(
+        unique=True,
+        blank=True
+    )
+    hotel = models.ForeignKey(
+        Hotel,
+        on_delete=models.CASCADE,
+        related_name='media'
+    )
+    file = models.FileField(upload_to='Hotel/media/')
+    media_type = models.CharField(
+        max_length=10,
+        choices=HOTEL_MEDIA_TYPE,
+        default='image'
+    )
+    caption = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.media_type.capitalize()} for {self.hotel.name}"
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(f"{self.hotel.name}-{self.media_type}")
+            unique_slug = base_slug
+            counter = 1
+
+            while HotelMedia.objects.filter(slug=unique_slug).exists():
+                unique_slug = f"{base_slug}-{counter}"
+                counter += 1
+
+            self.slug = unique_slug
+
+        super().save(*args, **kwargs)

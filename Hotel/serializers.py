@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination, Package
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination, Package,HotelMedia
 from django.db.models import Min, Avg, Count
 from Restaurant.models import Restaurant
 from django.utils import timezone
@@ -249,7 +249,6 @@ class BookingSerializer(serializers.ModelSerializer):
     )
 
     room_number = serializers.CharField(source="room.room_number", read_only=True)
-
     class Meta:
         model = Booking
         fields = '__all__'
@@ -321,14 +320,22 @@ class BookingSerializer(serializers.ModelSerializer):
             
         # ✅ Auto-generate invoice for this booking
         content_type = ContentType.objects.get_for_model(Booking)
+        guest = booking.guests.first()
+
+        customer_name = (
+            f"{guest.first_name} {guest.last_name or ''}".strip()
+            if guest else
+            booking.user.full_name or "Guest"
+            )
         invoice = Invoice.objects.create(
             content_type=content_type,
             object_id=booking.id,
             issued_to=booking.user,
-            customer_name=f"{booking.guests.first().first_name} {booking.guests.first().last_name}",
+            customer_name=customer_name,
             # days = booking.total_nights,
             total_amount=booking.room.price_per_night * booking.total_nights,
-            status='unpaid'
+            status='unpaid',
+            created_by= booking.user
         )
         InvoiceItem.objects.create(
             invoice=invoice,
@@ -679,3 +686,55 @@ class ActivityLogSerializer(serializers.Serializer):
     staff_name = serializers.CharField(allow_null=True)
     staff_designation = serializers.CharField(allow_null=True)
     staff_department = serializers.CharField(allow_null=True)
+
+
+class HotelMediaSerializer(serializers.ModelSerializer):
+    hotel = serializers.SlugRelatedField(
+            slug_field='slug',
+            queryset=Hotel.objects.all()
+        )
+
+
+    hotel_name = serializers.CharField(
+        source='hotel.name',
+        read_only=True
+    )
+    file = serializers.FileField(required=False)
+
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = HotelMedia
+        fields = [
+            'id',
+            'hotel',
+            'hotel_name',
+            'file',
+            'files',
+            'media_type',
+            'caption',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def create(self, validated_data):
+        files = validated_data.pop('files', None)
+
+        #  SINGLE FILE
+        if not files:
+            return super().create(validated_data)
+
+        #  MULTIPLE FILES
+        media_objects = []
+        for file in files:
+            media = HotelMedia.objects.create(
+                file=file,
+                **validated_data
+            )
+            media_objects.append(media)
+
+        return media_objects

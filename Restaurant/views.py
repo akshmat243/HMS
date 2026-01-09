@@ -5,12 +5,12 @@ from datetime import datetime
 from django.utils.text import slugify
 
 from .models import (
-    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant, BookingCallback
+    MenuCategory, MenuItem, Table, RestaurantOrder, OrderItem, TableReservation, Restaurant, BookingCallback, RestaurantMedia
 )
 from .serializers import (
     MenuCategorySerializer, MenuItemSerializer, TableSerializer,
     RestaurantOrderSerializer, OrderItemSerializer, TableReservationSerializer,
-    RestaurantDashboardSerializer, RestaurantSerializer, BookingCallbackSerializer,TableSearchSerializer
+    RestaurantDashboardSerializer, RestaurantSerializer, BookingCallbackSerializer,TableSearchSerializer, RestaurantMediaSerializer
 )
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper,Count,Q
 from datetime import date
@@ -689,3 +689,27 @@ class PublicTableSearchView(generics.ListAPIView):
                 pass 
 
         return queryset
+    
+class RestaurantMediaViewSet(ProtectedModelViewSet):
+    queryset = RestaurantMedia.objects.none()
+    serializer_class = RestaurantMediaSerializer
+    model_name = 'RestaurantMedia'
+    lookup_field = 'slug'
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = RestaurantMedia.objects.select_related('restaurant')
+
+        # Superuser → all restaurant media
+        if user.is_superuser:
+            return qs
+
+        # Admin → media of own restaurant
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(restaurant__owner=user)
+
+        # Staff → media of assigned restaurant
+        if hasattr(user, 'staff_profile') and user.staff_profile.restaurant:
+            return qs.filter(restaurant=user.staff_profile.restaurant)
+
+        return qs.none() 

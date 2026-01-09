@@ -1900,6 +1900,46 @@ class PackageViewSet(ProtectedModelViewSet):
     #         raise PermissionDenied("Only Admins can create packages.")
 
 
+class HotelMediaViewSet(ProtectedModelViewSet):
+    queryset = HotelMedia.objects.all()
+    serializer_class = HotelMediaSerializer
+    model_name = 'HotelMedia'
+    lookup_field = 'slug'
+    
+    def get_queryset(self):
+        user = self.request.user
+        qs = HotelMedia.objects.select_related('hotel')
+
+        # Superuser → access all hotel media
+        if user.is_superuser:
+            return qs
+
+        # Admin → media of own hotel
+        if hasattr(user, 'role') and user.role.name.lower() == 'admin':
+            return qs.filter(hotel__owner=user)
+
+        # Staff → media of assigned hotel
+        if hasattr(user, 'staff_profile') and user.staff_profile.hotel:
+            return qs.filter(hotel=user.staff_profile.hotel)
+
+        return qs.none()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = serializer.save()
+
+        # MULTIPLE FILE RESPONSE
+        if isinstance(result, list):
+            response_serializer = self.get_serializer(result, many=True)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+        # SINGLE FILE RESPONSE
+        response_serializer = self.get_serializer(result)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
+    
 # class HomeDashboardViewSet(ProtectedModelViewSet):
 #     """
 #     Dedicated Dashboard ViewSet inheriting from ProtectedModelViewSet.

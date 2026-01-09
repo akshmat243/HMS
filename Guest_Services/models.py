@@ -4,11 +4,15 @@ from django.db import models
 from django.utils.text import slugify
 from django.contrib.auth import get_user_model
 User = get_user_model()
+from Hotel.models import Hotel
+from Restaurant.models import Restaurant
 
 class ServiceCategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(unique=True, blank=True)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='category_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='category_restaurant')
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -34,6 +38,8 @@ class GuestService(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='servie_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
     name = models.CharField(max_length=150)
     icon = models.CharField(max_length=50,blank=True, null=True)
     slug = models.SlugField(unique=True, blank=True)
@@ -90,6 +96,8 @@ class ServiceRequest(models.Model):
     # booking = models.ForeignKey("hotel.Booking", on_delete=models.CASCADE,related_name="service_requests")
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='service_request_hotel')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null= True, related_name='supplier_restaurant')
     icon = models.CharField(max_length=50,blank=True, null=True)
     slug = models.SlugField(unique=True, blank=True)
     booking = models.ForeignKey('Hotel.Booking', on_delete=models.CASCADE, related_name="service_requests")

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination,MobileAppConfig,Package
+from .models import Hotel, RoomCategory, Room, Booking, RoomServiceRequest, Guest, RoomMedia, Destination,MobileAppConfig,Package, HotelMedia
 
 class GuestInline(admin.TabularInline):
     model = Guest
@@ -125,3 +125,15 @@ class PackageAdmin(admin.ModelAdmin):
     readonly_fields = ('slug',)  # slug & preview read-only
     # prepopulated_fields = {'slug': ('name',)}     # Auto-slug from name
     ordering = ('name',)
+
+@admin.register(HotelMedia)
+class HotelMediaAdmin(admin.ModelAdmin):
+    list_display = ('id','hotel','media_type','caption','created_at')
+
+    list_filter = ('media_type','created_at',)
+
+    search_fields = ('hotel__name','caption',)
+
+    readonly_fields = ('created_at',)
+
+    ordering = ('-created_at',)
