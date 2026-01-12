@@ -134,28 +134,35 @@ class Room(models.Model):
     def __str__(self):
         return f"{self.room_number} - {self.hotel.name}"
 
-    def save(self, *args, **kwargs):
 
+    def save(self, *args, **kwargs):
+        
         previous_status = None
         if not self._state.adding:
             previous_status = Room.objects.get(pk=self.pk).status
 
         with transaction.atomic():
-            if not self.room_number and not self.pk:
-                count = Room.objects.filter(hotel=self.hotel, floor=self.floor).count() + 1
+
+            if self._state.adding:
+                count = Room.objects.filter(
+                    hotel=self.hotel,
+                    floor=self.floor
+                ).count() + 1
+
                 try:
                     floor_number = int(self.floor)
-                    self.room_number = f"R{floor_number}{count:02d}"
+                    room_number = f"R{floor_number}{count:02d}"
                 except ValueError:
-                    self.room_number = f"R{self.floor}{count:02d}"
+                    room_number = f"R{self.floor}{count:02d}"
 
-                while Room.objects.filter(hotel=self.hotel, room_number=self.room_number).exists():
+                while Room.objects.filter(
+                    hotel=self.hotel,
+                    room_number=room_number
+                ).exists():
                     count += 1
-                    try:
-                        floor_number = int(self.floor)
-                        self.room_number = f"R{floor_number}{count:02d}"
-                    except ValueError:
-                        self.room_number = f"R{self.floor}{count:02d}"
+                    room_number = f"R{floor_number}{count:02d}"
+
+                self.room_number = room_number
 
             if not self.slug:
                 base_slug = slugify(f"{self.hotel.name}-{self.room_number}")
@@ -166,28 +173,17 @@ class Room(models.Model):
                     index += 1
                 self.slug = slug
 
-            # Auto-generate room_code if not set
-            # if not self.room_code:
-            #     self.room_code = f"RM-{uuid.uuid4().hex[:8].upper()}"
-
-            # Default room price from category if not manually set
             if not self.price_per_night and self.room_category:
                 self.price_per_night = self.room_category.price_per_night
 
             super().save(*args, **kwargs)
 
-        
-         # 1) AVAILABLE → MAINTENANCE (auto-create task)
         if previous_status != "maintenance" and self.status == "maintenance":
             self.create_maintenance_task()
 
-        # 2) MAINTENANCE → AVAILABLE (auto-complete tasks)
         if previous_status == "maintenance" and self.status == "available":
             self.complete_maintenance_tasks()
 
-         # -----------------------------------------------------
-    # HELPER FUNCTION — CREATE MAINTENANCE TASK
-    # -----------------------------------------------------
     def create_maintenance_task(self):
         from maintenance.models import MaintenanceTask, MaintenanceCategory
         # Prevent duplicate pending/in-progress tasks
