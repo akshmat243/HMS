@@ -118,7 +118,7 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MessageTemplate
-        fields = ['id','slug', 'name', 'channel', 'created_time', 'use_count']
+        fields = ['id','slug', 'name','subject' ,'body','channel', 'created_time', 'use_count']
 
     def get_use_count(self, obj):
         # best-effort count: count OutgoingMessage with same subject+body

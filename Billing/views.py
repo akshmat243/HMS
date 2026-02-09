@@ -25,14 +25,52 @@ from MBP.serializers import AuditLogSerializer
 from django.utils.timesince import timesince
 
 class InvoiceViewSet(ProtectedModelViewSet):
-    # queryset = Invoice.objects.select_related('issued_to').prefetch_related('content_type')
-    def get_queryset(self):
-        user = self.request.user
-        return Invoice.objects.filter(issued_to=user).select_related('issued_to', 'content_type')
-    
     serializer_class = InvoiceSerializer
     model_name = 'Invoice'
     lookup_field = 'slug'
+    queryset = Invoice.objects.all()
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        # 1️⃣ Superuser → all invoices
+        if user.is_superuser:
+            return qs
+
+        role = getattr(user, "role", None)
+        if not role:
+            return Invoice.objects.none()
+
+        role_name = role.name.lower()
+
+        # 2️⃣ Hotel Admin (Owner)
+        # Admin jis hotel ka owner hai,
+        # us hotel ke staff / users ke invoices
+        if role_name == "admin":
+            return qs.filter(
+                issued_to__hotel=user.hotel
+            ).distinct()
+
+        # 3️⃣ Staff
+        # Staff apne hotel ke invoices dekhe
+        if role_name == "staff":
+            if hasattr(user, "staff_profile") and user.staff_profile.hotel:
+                return qs.filter(
+                    # Q (issued_to__hotel=user.staff_profile.hotel) |
+                    Q(created_by=user)
+                ).distinct()
+            return Invoice.objects.none()
+
+        # 4️⃣ Customer
+        # Customer sirf apne invoices dekhe
+        if role_name == "customer":
+            return qs.filter(
+                issued_to=user
+            )
+
+        # 5️⃣ Others (vendor, unknown roles)
+        return Invoice.objects.none()
+    
 
     @action(detail=True, methods=['patch'], url_path='pay')
     def pay_invoice(self, request, slug=None):
@@ -179,6 +217,34 @@ class PaymentViewSet(ProtectedModelViewSet):
     serializer_class = PaymentSerializer
     model_name = 'Payment'
     lookup_field = 'slug'
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Payment.objects.select_related('invoice')
+
+        # 1️⃣ Superuser → all payments
+        if user.is_superuser:
+            return qs
+
+        # 2️⃣ Admin / Staff → only their hotel payments
+        hotel = None
+
+        # Admin (hotel owner)
+        if hasattr(user, 'role') and user.role and user.role.name.lower() == 'admin':
+            hotel = getattr(user, 'hotel', None)
+
+        # Staff (assigned hotel)
+        elif hasattr(user, 'staff_profile') and getattr(user.staff_profile, 'hotel', None):
+            hotel = user.staff_profile.hotel
+
+        if hotel:
+            return qs.filter(
+                Q(invoice__issued_to__hotel=hotel) |
+                Q(invoice__related_object__hotel=hotel)
+            ).distinct()
+
+        # 3️⃣ Others (customer, vendor, etc.) → no access
+        return qs.none()
     
     @action(detail=False, methods=['get'], url_path='today-revenue')
     def today_revenue(self, request):

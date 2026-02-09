@@ -96,3 +96,72 @@ Hotel Management System
         html_message=html_message,   # THIS renders the button
         fail_silently=False,
     )
+    
+
+from django.dispatch import Signal, receiver
+from django.conf import settings
+from django.core.mail import send_mail
+
+# custom signal
+user_registered = Signal()  # provides: user
+
+@receiver(user_registered)
+def send_verification_email(sender, user, **kwargs):
+    verification_link = (
+        f"http://localhost:8080/verify-email/{user.slug}/"
+    )
+
+    subject = "Verify your email address"
+
+    text_message = f"""
+Hello {user.full_name},
+
+Thank you for registering.
+
+Please verify your email by clicking the link below:
+{verification_link}
+
+If you did not create this account, please ignore this email.
+
+Regards,
+Hotel Management System
+"""
+
+    html_message = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif;">
+        <p>Hello <strong>{user.full_name}</strong>,</p>
+
+        <p>Thank you for registering.</p>
+
+        <p>Please verify your email by clicking the button below:</p>
+
+        <p>
+          <a href="{verification_link}"
+             style="
+               background-color:#2563eb;
+               color:white;
+               padding:12px 20px;
+               text-decoration:none;
+               border-radius:6px;
+               font-weight:bold;
+             ">
+            Verify Email
+          </a>
+        </p>
+
+        <p>If you did not create this account, please ignore this email.</p>
+
+        <p>Regards,<br><strong>Hotel Management System</strong></p>
+      </body>
+    </html>
+    """
+
+    send_mail(
+        subject=subject,
+        message=text_message,        # fallback
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        html_message=html_message,
+        fail_silently=False,
+    )
