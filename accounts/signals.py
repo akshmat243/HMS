@@ -1,6 +1,9 @@
 from django.dispatch import receiver
 from django.conf import settings
 from django.core.mail import send_mail
+from django.utils.text import slugify
+from .models import User
+from django.db.models.signals import pre_save
 from django.dispatch import Signal
 
 user_created_with_password = Signal()
@@ -9,7 +12,7 @@ user_created_with_password = Signal()
 @receiver(user_created_with_password)
 def send_credentials_and_verification(sender, user, raw_password, **kwargs):
     verification_link = (
-        f"http://localhost:8080/verify-email-reset-password/{user.slug}/"
+        f"{settings.FRONTEND_BASE_URL}/verify-email-reset-password/{user.slug}/"
     )
 
     subject = "Verify your email & login credentials"
@@ -108,7 +111,7 @@ user_registered = Signal()  # provides: user
 @receiver(user_registered)
 def send_verification_email(sender, user, **kwargs):
     verification_link = (
-        f"http://localhost:8080/verify-email/{user.slug}/"
+        f"{settings.FRONTEND_BASE_URL}/verify-email/{user.slug}/"
     )
 
     subject = "Verify your email address"
@@ -165,3 +168,14 @@ Hotel Management System
         html_message=html_message,
         fail_silently=False,
     )
+
+
+@receiver(pre_save, sender=User)
+def generate_unique_slug(sender, instance, **kwargs):
+    if not instance.slug:
+        base_slug = slugify(instance.email.split('@')[0])
+        instance.slug = base_slug
+        counter = 1
+        while User.objects.filter(slug=instance.slug).exclude(pk=instance.pk).exists():
+            instance.slug = f"{base_slug}-{counter}"
+            counter += 1

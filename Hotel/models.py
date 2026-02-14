@@ -5,7 +5,9 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pydantic_core import ValidationError
+import pytz
 # from Marketing.models import Campaign
 # from maintenance.models import MaintenanceTask, MaintenanceCategory
 
@@ -41,7 +43,7 @@ class Hotel(models.Model):
         help_text="The admin user who owns this hotel"
     )
     name = models.CharField(max_length=255)
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(unique=True)
     description = models.TextField(blank=True)
     amenities = models.TextField(help_text="Comma-separated list of amenities")
     address = models.TextField()
@@ -134,12 +136,12 @@ class Room(models.Model):
     def __str__(self):
         return f"{self.room_number} - {self.hotel.name}"
 
-
+    @transaction.atomic
     def save(self, *args, **kwargs):
         
         previous_status = None
         if not self._state.adding:
-            previous_status = Room.objects.get(pk=self.pk).status
+            previous_status = Room.objects.select_for_update().get(pk=self.pk).status
 
         with transaction.atomic():
 
@@ -254,85 +256,143 @@ class RoomMedia(models.Model):
         return f"{self.media_type.capitalize()} for {self.room.room_number}"
 
 
+from django.db import models
+from django.utils.text import slugify
+from django.core.exceptions import ValidationError
+from decimal import Decimal
+import uuid
+
+
 class Booking(models.Model):
-    STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('confirmed', 'Confirmed'),
-        ('cancelled', 'Cancelled'),
-        ('checked_in', 'Checked In'),
-        ('checked_out', 'Checked Out'),
-    ]
 
-    PAYMENT_STATUS = [
-        ('unpaid', 'Unpaid'),
-        ('paid', 'Paid'),
-        ('partial', 'Partial'),
-    ]
-    SOURCE_CHOICES = [
-        ('walk_in', 'Walk-In'),
-        ('website', 'Website'),
-        ('campaign', 'Campaign '), 
-        ('referral', 'Referral'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
-    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='bookings')
-    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='bookings')
-    booking_code = models.CharField(max_length=10, unique=True, blank=True)
-    booking_source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='website',help_text="Where did this booking come from?"
+    STATUS_CHOICES = (
+        ("pending", "Pending"),
+        ("confirmed", "Confirmed"),
+        ("cancelled", "Cancelled"),
+        ("checked_in", "Checked In"),
+        ("checked_out", "Checked Out"),
     )
 
-    # Campaign Link taaki pata chale ki kaun se campaign ka ROI badhana hai
-    # campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True, related_name="bookings"
-    # )
+    PAYMENT_STATUS = (
+        ("unpaid", "Unpaid"),
+        ("paid", "Paid"),
+        ("partial", "Partial"),
+    )
+
+    SOURCE_CHOICES = (
+        ("walk_in", "Walk-In"),
+        ("website", "Website"),
+        ("campaign", "Campaign"),
+        ("referral", "Referral"),
+    )
+
+    VALID_TRANSITIONS = {
+        "pending": ["confirmed", "cancelled"],
+        "confirmed": ["checked_in", "cancelled"],
+        "checked_in": ["checked_out"],
+        "checked_out": [],
+        "cancelled": [],
+    }
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name="bookings")
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
+
+    room_price_at_booking = models.DecimalField(
+        max_digits=10,
+        decimal_places=2
+    )
+
+    booking_code = models.CharField(max_length=10, unique=True, blank=True)
+    booking_source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default="website"
+    )
+
     slug = models.SlugField(unique=True, blank=True)
+
     check_in = models.DateField()
     check_out = models.DateField()
+
     guests_count = models.PositiveIntegerField()
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS, default='unpaid')
+
+    total_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending"
+    )
+
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PAYMENT_STATUS,
+        default="unpaid"
+    )
+
     check_in_time = models.DateTimeField(null=True, blank=True)
     check_out_time = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.user} - {self.hotel.name} - {self.status}"
-    
+        return f"{self.booking_code} - {self.hotel.name}"
+
+    def clean(self):
+        if self.check_in >= self.check_out:
+            raise ValidationError("Check-out date must be after check-in date.")
+
     def save(self, *args, **kwargs):
+        self.clean()
+
+        # Booking code
         if not self.booking_code:
-            last = Booking.objects.order_by('-created_at').first()
-            if last and last.booking_code and last.booking_code.startswith('BK'):
-                last_number = int(last.booking_code.replace('BK', ''))
+            last = Booking.objects.order_by("-created_at").first()
+            if last and last.booking_code:
+                last_number = int(last.booking_code.replace("BK", ""))
                 self.booking_code = f"BK{last_number + 1:03d}"
             else:
                 self.booking_code = "BK001"
 
+        # Slug
         if not self.slug:
             self.slug = slugify(self.booking_code)
 
-        if self.room and self.check_in and self.check_out:
+        # Freeze room price on create
+        if self._state.adding and self.room:
+            self.room_price_at_booking = self.room.price_per_night
 
-            total_nights = (self.check_out - self.check_in).days
-            
-            # Ensure nights > 0
-            if total_nights < 1:
-                total_nights = 1  
-
-            price = self.room.price_per_night or 0
-
-            self.total_amount = total_nights * price
-
+        # Calculate total
+        nights = (self.check_out - self.check_in).days
+        self.total_amount = Decimal(nights) * self.room_price_at_booking
 
         super().save(*args, **kwargs)
+
+        # Free room on checkout
         if self.status == "checked_out" and self.room:
             self.room.status = "available"
-            self.room.save()
+            self.room.save(update_fields=["status"])
+
+    def change_status(self, new_status):
+        if new_status not in self.VALID_TRANSITIONS.get(self.status, []):
+            raise ValidationError(
+                f"Invalid transition from {self.status} to {new_status}"
+            )
+        self.status = new_status
+        self.save()
 
     @property
     def total_nights(self):
         return (self.check_out - self.check_in).days
+
         
         
 class Guest(models.Model):
@@ -366,8 +426,15 @@ class Guest(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name or ''} ({self.booking.booking_code})".strip()
+    
+    def clean(self):
+        # Guests can only be added before checkout
+        if self.booking.check_out < timezone.now().date():
+            from django.core.exceptions import ValidationError
+            raise ValidationError("Cannot add guests to past bookings")
 
     def save(self, *args, **kwargs):
+        self.full_clean()
         if not self.slug:
             base_slug = slugify(f"{self.first_name}-{self.last_name or ''}-{self.booking.booking_code}")
             counter = 1
@@ -378,6 +445,43 @@ class Guest(models.Model):
             self.slug = new_slug
         super().save(*args, **kwargs)
     
+    
+LAUNDRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "qty": {"type": "integer", "minimum": 1}
+                },
+                "required": ["name", "qty"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["items"],
+    "additionalProperties": False
+}
+
+import jsonschema
+from django.core.exceptions import ValidationError
+
+def validate_laundry_schema(value):
+    try:
+        jsonschema.validate(instance=value, schema=LAUNDRY_SCHEMA)
+    except jsonschema.ValidationError as e:
+        raise ValidationError(str(e))
+
+
+class ServiceRate(models.Model):
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, related_name='service_rates')
+    service_type = models.CharField(max_length=50)
+    rate_per_unit = models.DecimalField(max_digits=10, decimal_places=2)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
     
 
 class RoomServiceRequest(models.Model):
@@ -395,19 +499,18 @@ class RoomServiceRequest(models.Model):
         ('ready', 'Ready for Delivery'),
         ('delivered', 'Delivered'),
     ]
+    
+    VALID_TRANSITIONS = {
+        'pending': ['in_progress'],
+        'in_progress': ['ready'],
+        'ready': ['delivered'],
+        'delivered': [],
+    }
 
     PRIORITY_CHOICES = [
         ('normal', 'Normal'),
         ('express', 'Express'),
     ]
-
-    SERVICE_RATES = {
-        'laundry': 50,      # ₹50 per item
-        'food': 0,          # handled separately
-        'amenities': 0,     # usually free
-        'cleaning': 100,    # fixed
-        'other': 0,
-    }
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     slug = models.SlugField(unique=True, blank=True)
@@ -418,7 +521,11 @@ class RoomServiceRequest(models.Model):
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="service_requests")
 
     service_type = models.CharField(max_length=50, choices=SERVICE_CHOICES)
-    description = models.JSONField(default=dict, help_text="e.g. {'items': [{'name': 'Shirt', 'qty': 3}]}")
+    description = models.JSONField(
+        default=dict,
+        validators=[validate_laundry_schema],
+        help_text="Structured item list with name and quantity"
+    )
 
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='normal')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
@@ -436,117 +543,149 @@ class RoomServiceRequest(models.Model):
         return f"{self.service_code} - {self.service_type} - Room {self.room.room_number}"
 
     def calculate_cost(self):
-        rate = self.SERVICE_RATES.get(self.service_type, 0)
+        rate = ServiceRate.objects.filter(
+            hotel=self.room.hotel,
+            service_type=self.service_type,
+            effective_from__lte=timezone.now().date(),
+        ).first()
 
-        if self.service_type == 'laundry':
-            items = self.description.get('items', [])
-            total_qty = sum(item.get('qty', 1) for item in items)
-            return rate * total_qty
+        if not rate:
+            raise ValidationError(f"No rate found for {self.service_type}")
 
-        elif self.service_type == 'cleaning':
-            return rate
+        if self.service_type == "laundry":
+            items = self.description.get("items", [])
+            total_qty = sum(item["qty"] for item in items)
+            return rate.rate_per_unit * total_qty
 
-        elif self.service_type == 'food':
-            return 0
+        return rate.rate_per_unit
 
-        else:
-            return rate
-
+    @transaction.atomic
     def save(self, *args, **kwargs):
-        # ✅ Auto-generate service_code
+
+        is_new = self.pk is None
+        old_status = None
+
+        if not is_new:
+            old_status = (
+                RoomServiceRequest.objects
+                .filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+
         if not self.service_code:
             year = timezone.now().year
-            hotel_code = slugify(self.room.hotel.name)[:5].upper() if self.room and self.room.hotel else "HOTEL"
+            hotel_code = (
+                slugify(self.room.hotel.name)[:5].upper()
+                if self.room and self.room.hotel else "HOTEL"
+            )
             prefix = f"SRV-{hotel_code}-{year}-"
-            last_code = RoomServiceRequest.objects.filter(service_code__startswith=prefix).aggregate(max_code=Max('service_code'))['max_code']
 
-            if last_code:
-                try:
-                    last_number = int(last_code.split('-')[-1])
-                except (ValueError, IndexError):
-                    last_number = 0
-                next_number = last_number + 1
-            else:
-                next_number = 1
+            last_code = (
+                RoomServiceRequest.objects
+                .filter(service_code__startswith=prefix)
+                .aggregate(max_code=Max("service_code"))["max_code"]
+            )
 
-            self.service_code = f"{prefix}{next_number:04d}"
+            last_number = int(last_code.split("-")[-1]) if last_code else 0
+            self.service_code = f"{prefix}{last_number + 1:04d}"
 
-        # ✅ Auto-generate slug
         if not self.slug:
-            hotel_part = slugify(self.room.hotel.name) if self.room and self.room.hotel else "hotel"
-            base_slug = f"{hotel_part}-{self.service_type}-{self.room.room_number}-{self.service_code}"
-            self.slug = slugify(base_slug)
+            hotel_part = (
+                slugify(self.room.hotel.name)
+                if self.room and self.room.hotel else "hotel"
+            )
+            self.slug = slugify(
+                f"{hotel_part}-{self.service_type}-{self.room.room_number}-{self.service_code}"
+            )
 
-        # ✅ Auto-calculate costs
-        self.base_cost = self.SERVICE_RATES.get(self.service_type, 0)
         total = self.calculate_cost()
+        self.base_cost = total
         self.total_cost = total
         self.cost = total
-        is_new = self._state.adding  # Check if this is a new instance
+
         super().save(*args, **kwargs)
-        
-        # ✅ Auto-create invoice if new and no existing invoice linked
+
         from Billing.models import Invoice, InvoiceItem
         from django.contrib.contenttypes.models import ContentType
-        if is_new:
-            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
-            invoice = Invoice.objects.create(
-                content_type=content_type,
-                object_id=self.id,
-                issued_to=self.user,
-                total_amount=self.total_cost,
-                status='unpaid'
-            )
+        from inventory.models import InventoryItem
 
-            InvoiceItem.objects.create(
-                invoice=invoice,
-                description=f"Room Service - {self.service_type.title()} ({self.room.room_number})",
-                quantity=1,
-                unit_price=self.total_cost,
-            )
-        
-        if not self._state.adding:
+        content_type = ContentType.objects.get_for_model(RoomServiceRequest)
 
-             # Update linked invoice if exists
-            content_type = ContentType.objects.get_for_model(RoomServiceRequest)
-            invoice = Invoice.objects.filter(content_type=content_type, object_id=self.id).first()
+        invoice, created = Invoice.objects.get_or_create(
+            content_type=content_type,
+            object_id=self.id,
+            defaults={
+                "issued_to": self.user,
+                "total_amount": self.total_cost,
+                "status": "unpaid",
+            },
+        )
 
-            if invoice:
-                invoice.total_amount = self.total_cost
-                invoice.save(update_fields=["total_amount"])
+        if not created:
+            invoice.total_amount = self.total_cost
+            invoice.save(update_fields=["total_amount"])
+            invoice.items.all().delete()
 
-                invoice.items.all().delete()
-                InvoiceItem.objects.create(
-                    invoice=invoice,
-                    description=f"Updated Room Service - {self.service_type.title()}",
-                    quantity=1,
-                    unit_price=self.total_cost,
-                )
-        is_new = self._state.adding
+        InvoiceItem.objects.create(
+            invoice=invoice,
+            description=f"Room Service - {self.service_type.title()} ({self.room.room_number})",
+            quantity=1,
+            unit_price=self.total_cost,
+        )
 
-        # call original save
-        from .models import RoomServiceStage  # avoid circular import
+        from .models import RoomServiceStage
 
-        # If new → create pending stage
         if is_new:
             RoomServiceStage.objects.create(
                 service=self,
-                stage='collection'
+                stage="collection"
             )
-        else:
-            # detect status change
-            old = RoomServiceRequest.objects.filter(pk=self.pk).first()
-            if old and old.status != self.status:
-                stage_map = {
-                    "pending": "collection",
-                    "in_progress": "washing",
-                    "ready": "quality_check",
-                    "delivered": "delivery",
-                }
-                RoomServiceStage.objects.create(
-                    service=self,
-                    stage=stage_map.get(self.status, "collection")
+
+        elif old_status and old_status != self.status:
+            stage_map = {
+                "pending": "collection",
+                "in_progress": "washing",
+                "ready": "quality_check",
+                "delivered": "delivery",
+            }
+            RoomServiceStage.objects.create(
+                service=self,
+                stage=stage_map.get(self.status, "collection")
+            )
+
+            
+    
+    def clean(self):
+        if self.service_type == 'laundry':
+            items = self.description.get('items', [])
+            for item in items:
+                inv = InventoryItem.objects.filter(
+                    name=item['name'],
+                    hotel=self.room.hotel
+                ).first()
+                if not inv or inv.quantity < item['qty']:
+                    raise ValidationError(
+                        f"Not enough inventory for {item['name']}"
+                    )
+    
+    def fulfill(self):
+        """Deduct items from inventory after fulfillment"""
+        if self.service_type == 'laundry':
+            items = self.description.get('items', [])
+            for item in items:
+                inv = InventoryItem.objects.get(
+                    name=item['name'],
+                    hotel=self.room.hotel
                 )
+                inv.quantity -= item['qty']
+                inv.save()
+    
+    def update_status(self, new_status):
+        if new_status not in self.VALID_TRANSITIONS.get(self.status, []):
+            raise ValidationError(f"Invalid transition: {self.status} → {new_status}")
+        self.status = new_status
+        self.save()
 
 class RoomServiceStage(models.Model):
     STAGE_CHOICES = [

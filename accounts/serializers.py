@@ -4,6 +4,7 @@ from .models import UserModule
 from django.utils.crypto import get_random_string
 from .signals import user_created_with_password, user_registered
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 User = get_user_model()
 
@@ -25,6 +26,7 @@ class RegisterUserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this phone number already exists.")
         return value
 
+    @transaction.atomic
     def create(self, validated_data):
         password = validated_data.pop('password')
         user = User(**validated_data)
@@ -70,6 +72,7 @@ class UserSerializer(serializers.ModelSerializer):
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
 
+    @transaction.atomic
     def create(self, validated_data):
         request = self.context.get("request")
         creator = getattr(request, "user", None)

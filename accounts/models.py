@@ -1,8 +1,37 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
+from django.utils import timezone
 from django.utils.text import slugify
+from django.core.validators import EmailValidator
+from django.core.exceptions import ValidationError
 import uuid
 
+class BaseModel(models.Model):
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        abstract = True
+    
+    def soft_delete(self):
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save()
+
+# In QuerySets
+class ActiveManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
+    
+
+class CustomEmailValidator(EmailValidator):
+    def __call__(self, value):
+        super().__call__(value)
+        # Additional checks
+        domain = value.split('@')[1].lower()
+        if domain in ['tempmail.com', 'guerrillamail.com']:
+            raise ValidationError("Temporary email addresses not allowed")
+            
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
@@ -24,11 +53,16 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=15, unique=True, blank=True, null=True) 
+    email = models.EmailField(
+        unique=True,
+        validators=[CustomEmailValidator()],
+        db_index=True,
+        help_text="Unique email address"
+    )
+    phone = models.CharField(max_length=15, unique=True) 
     full_name = models.CharField(max_length=100, blank=True)
     role = models.ForeignKey('MBP.Role', null=True, blank=True, on_delete=models.CASCADE)
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(unique=True)
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)

@@ -5,6 +5,8 @@ from Restaurant.models import Restaurant
 from django.utils import timezone
 from django.db.models.functions import Coalesce
 from .utils import ensure_module
+from django.db import transaction
+from .events import BookingCreatedEvent
 
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -284,6 +286,7 @@ class BookingSerializer(serializers.ModelSerializer):
 
         return data
 
+    @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
 
@@ -291,6 +294,9 @@ class BookingSerializer(serializers.ModelSerializer):
         validated_data.pop("guests", None)
 
         booking = Booking.objects.create(**validated_data)
+        transaction.on_commit(
+            lambda: BookingCreatedEvent(booking).emit()
+        )
 
         # reserve room
         booking.room.status = "reserved"

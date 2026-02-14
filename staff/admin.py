@@ -8,12 +8,12 @@ from decimal import Decimal
 @admin.register(Staff)
 class StaffAdmin(admin.ModelAdmin):
     list_display = (
-        'user', 'hotel', 'designation', 'department',
+        'user', 'designation', 'department',
         'status', 'joining_date', 'get_monthly_salary',
         'performance_score_display',
     )
     search_fields = ('user__username', 'user__first_name', 'user__last_name', 'designation', 'department')
-    list_filter = ('status', 'department', 'hotel')
+    list_filter = ('status', 'department')
     readonly_fields = ('slug', 'created_at', 'updated_at', 'performance_score_display')
 
     def get_monthly_salary(self, obj):
@@ -90,7 +90,7 @@ class StaffDocumentAdmin(admin.ModelAdmin):
         "expiry_date",
         "created_at",
     )
-    list_filter = ("document_type", "staff__hotel", "created_at")
+    list_filter = ("document_type", "created_at")
     search_fields = (
         "staff__user__full_name",
         "staff__user__email",

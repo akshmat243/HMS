@@ -253,3 +253,5 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Real Estate <noreply@rea
 
 # Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:8080')

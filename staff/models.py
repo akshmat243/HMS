@@ -13,8 +13,8 @@ User = settings.AUTH_USER_MODEL
 class Staff(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_profile')
-    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
+    # hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
+    # restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null=True, blank=True, related_name='staff')
     slug = models.SlugField(unique=True, blank=True)
 
     designation = models.CharField(max_length=100, blank=True, null=True)
@@ -64,6 +64,31 @@ class Staff(models.Model):
         score = (present_days / total_days) * 100
         return round(score, 2)
 
+class StaffAssignment(models.Model):
+    ASSIGNMENT_TYPE = [
+        ('hotel', 'Hotel'),
+        ('restaurant', 'Restaurant'),
+    ]
+    
+    staff = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='assignments')
+    assignment_type = models.CharField(max_length=20, choices=ASSIGNMENT_TYPE)
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True)
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null=True, blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(assignment_type='hotel', hotel__isnull=False, restaurant__isnull=True) |
+                    models.Q(assignment_type='restaurant', restaurant__isnull=False, hotel__isnull=True)
+                ),
+                name='valid_assignment_type'
+            )
+        ]
+
 class StaffDocument(models.Model):
     DOCUMENT_TYPES = [
         ("aadhar", "Aadhar Card"),
@@ -93,7 +118,7 @@ class StaffDocument(models.Model):
 
 class Attendance(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    staff = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='attendance_records')
+    staff = models.ForeignKey("staff.Staff", on_delete=models.CASCADE, related_name='attendance_records')
     date = models.DateField(default=date.today)
     check_in = models.TimeField(blank=True, null=True)
     check_out = models.TimeField(blank=True, null=True)

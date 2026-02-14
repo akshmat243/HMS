@@ -77,10 +77,17 @@ class Customer(models.Model):
     feedback = models.TextField(blank=True)
     last_visit = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    lead = models.OneToOneField(Lead, on_delete=models.SET_NULL, null=True, blank=True, related_name='converted_customer')
+    converted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ('hotel', 'email')
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.lead:
+            self.lead.status = 'converted'
+            self.lead.save()
 
     def __str__(self):
         return self.name
