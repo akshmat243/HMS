@@ -4,20 +4,39 @@ from .models import Campaign, Promotion , CampaignEvent
 
 class CampaignSerializer(serializers.ModelSerializer):
     slug = serializers.SlugField(read_only=True)
-    hotel = serializers.SlugRelatedField(slug_field='name', read_only=True)
-    hotel_name = serializers.CharField(source='hotel.name', read_only=True)
+
+    hotel = serializers.SlugRelatedField(
+        slug_field='name',
+        read_only=True
+    )
+    hotel_name = serializers.CharField(
+        source='hotel.name',
+        read_only=True
+    )
+
+    # ✅ computed properties (NO source!)
+    total_spent = serializers.SerializerMethodField()
+    remaining_budget = serializers.ReadOnlyField()
+    roi_percent = serializers.ReadOnlyField()
+    budget_used_percent = serializers.ReadOnlyField()
+    total_revenue = serializers.ReadOnlyField()
 
     class Meta:
         model = Campaign
-        fields = '__all__'
+        fields = "__all__"
 
     def validate_name(self, value):
         qs = Campaign.objects.filter(name=value)
         if self.instance:
             qs = qs.exclude(id=self.instance.id)
         if qs.exists():
-            raise serializers.ValidationError("Campaign with this name already exists.")
+            raise serializers.ValidationError(
+                "Campaign with this name already exists."
+            )
         return value
+
+    def get_total_spent(self, obj):
+        return round(obj.total_spent, 2)
 
 
 class PromotionSerializer(serializers.ModelSerializer):

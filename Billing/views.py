@@ -202,6 +202,15 @@ class InvoiceViewSet(ProtectedModelViewSet):
 
         serializer = self.get_serializer(invoices, many=True)
         return Response(serializer.data)
+    
+    # Billing/views.py - pay_invoice()
+    @action(detail=True, methods=['patch'], url_path='pay')
+    def pay_invoice(self, request, slug=None):
+        invoice = self.get_object()
+        amount = request.data.get('amount_paid', None)
+        # ... validation ...
+        invoice.amount_paid += amount  # NO ATOMIC OPERATION
+        invoice.save()
 
 
 

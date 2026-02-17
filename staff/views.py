@@ -3,7 +3,7 @@ from .models import Staff, Attendance, Payroll, Leave, StaffDocument
 from .serializers import StaffSerializer, AttendanceSerializer, PayrollSerializer, LeaveSerializer, StaffDocumentSerializer , StaffDashboardOverviewSerializer 
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from datetime import time
+from datetime import time, date
 from django.utils import timezone
 from rest_framework import status
 from django.db.models import Count, Q, F, Avg, Sum
@@ -12,16 +12,21 @@ from Hotel.models import Hotel
 from Restaurant.models import Restaurant
 
 class StaffDocumentViewSet(ProtectedModelViewSet):
-    queryset = StaffDocument.objects.select_related(
-        "staff", "staff__hotel", "staff__restaurant", "staff__user"
-    )
     serializer_class = StaffDocumentSerializer
+    model_name = 'StaffDocument'
     lookup_field = "id"
-
 
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
+
+        qs = StaffDocument.objects.select_related(
+            "staff",
+            "staff__user"
+        ).prefetch_related(
+            "staff__assignments",
+            "staff__assignments__hotel",
+            "staff__assignments__restaurant"
+        )
 
         # 1️⃣ Superuser → all documents
         if user.is_superuser:
@@ -35,44 +40,45 @@ class StaffDocumentViewSet(ProtectedModelViewSet):
 
         # 2️⃣ Admin → staff documents of their hotel OR restaurant
         if role_name == "admin":
-            # Hotel admin
             hotel = Hotel.objects.filter(owner=user).first()
-            if hotel:
-                qs = qs.filter(staff__hotel=hotel)
-
-            # Restaurant admin
             restaurant = Restaurant.objects.filter(owner=user).first()
-            if restaurant:
-                qs = qs.filter(staff__restaurant=restaurant)
 
-            return qs
+            if hotel:
+                return qs.filter(
+                    staff__assignments__hotel=hotel,
+                    staff__assignments__is_active=True
+                )
+
+            if restaurant:
+                return qs.filter(
+                    staff__assignments__restaurant=restaurant,
+                    staff__assignments__is_active=True
+                )
+
+            return qs.none()
 
         # 3️⃣ Staff → only their own documents
         if role_name == "staff" and hasattr(user, "staff_profile"):
             return qs.filter(staff=user.staff_profile)
 
-        # 4️⃣ Others → no access
         return qs.none()
 
         
-
 class StaffViewSet(ProtectedModelViewSet):
-    """
-    CRUD for Staff profiles (auto-created when a user is assigned the staff role).
-
-    Role-based access:
-      - Superuser: can view/manage all staff across all hotels
-      - Admin: can view/manage only staff within their assigned hotel
-      - Staff: can only view their own profile
-    """
-    queryset = Staff.objects.all().select_related('user', 'hotel')
     serializer_class = StaffSerializer
     model_name = 'Staff'
     lookup_field = 'slug'
 
     def get_queryset(self):
         user = self.request.user
-        qs = Staff.objects.all().select_related("user", "hotel", "restaurant")
+
+        qs = Staff.objects.select_related(
+            "user"
+        ).prefetch_related(
+            "assignments",
+            "assignments__hotel",
+            "assignments__restaurant"
+        )
 
         # 1️⃣ Superuser → all staff
         if user.is_superuser:
@@ -80,69 +86,146 @@ class StaffViewSet(ProtectedModelViewSet):
 
         role = getattr(user, "role", None)
         if not role:
-            return Staff.objects.none()
+            return qs.none()
 
         role_name = role.name.lower()
 
         # 2️⃣ Admin → staff of their hotel OR restaurant
         if role_name == "admin":
-            # Hotel admin
             hotel = Hotel.objects.filter(owner=user).first()
-            if hotel:
-                return qs.filter(hotel=hotel)
-
-            # Restaurant admin
             restaurant = Restaurant.objects.filter(owner=user).first()
-            if restaurant:
-                return qs.filter(restaurant=restaurant)
 
-            return Staff.objects.none()
+            if hotel:
+                return qs.filter(
+                    assignments__hotel=hotel,
+                    assignments__is_active=True
+                )
+
+            if restaurant:
+                return qs.filter(
+                    assignments__restaurant=restaurant,
+                    assignments__is_active=True
+                )
+
+            return qs.none()
 
         # 3️⃣ Staff → only their own profile
         if role_name == "staff":
             return qs.filter(user=user)
 
-        # 4️⃣ Others → no access
-        return Staff.objects.none()
+        return qs.none()
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="change-assignment"
+    )
+    @transaction.atomic
+    def change_assignment(self, request, slug=None):
+        staff = self.get_object()
 
+        assignment_type = request.data.get("assignment_type")
+        hotel_slug = request.data.get("hotel_slug")
+        restaurant_slug = request.data.get("restaurant_slug")
+
+        # End old assignment
+        staff.assignments.filter(is_active=True).update(
+            is_active=False,
+            end_date=date.today()
+        )
+
+        # Create new assignment
+        if assignment_type == "hotel":
+            hotel = get_object_or_404(Hotel, slug=hotel_slug)
+            StaffAssignment.objects.create(
+                staff=staff,
+                assignment_type="hotel",
+                hotel=hotel,
+                start_date=date.today(),
+                is_active=True
+            )
+
+        elif assignment_type == "restaurant":
+            restaurant = get_object_or_404(Restaurant, slug=restaurant_slug)
+            StaffAssignment.objects.create(
+                staff=staff,
+                assignment_type="restaurant",
+                restaurant=restaurant,
+                start_date=date.today(),
+                is_active=True
+            )
+
+        else:
+            return Response(
+                {"error": "Invalid assignment type"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {"message": "Staff assignment updated successfully"},
+            status=status.HTTP_200_OK
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="assignment-history"
+    )
+    def assignment_history(self, request, slug=None):
+        """
+        View assignment history of a staff
+        Access controlled by ProtectedModelViewSet + queryset filtering
+        """
+        staff = self.get_object()
+
+        assignments = staff.assignments.select_related(
+            "hotel",
+            "restaurant"
+        ).order_by("-start_date")
+
+        serializer = StaffAssignmentHistorySerializer(assignments, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
-        """
-        Dashboard summary for staff management.
-        Role-aware:
-          - Superuser: all hotels
-          - Admin: only their hotel
-        """
         user = request.user
-        hotel_id = request.query_params.get('hotel')
 
         staffs = self.get_queryset()
 
-        # For superusers, allow optional ?hotel filter
-        if user.is_superuser and hotel_id:
-            staffs = staffs.filter(hotel_id=hotel_id)
+        # Superuser → optional hotel filter
+        if user.is_superuser:
+            hotel_id = request.query_params.get('hotel')
+            if hotel_id:
+                staffs = staffs.filter(assignments__hotel_id=hotel_id)
 
-        # For admins, always restrict to their own hotel
+        # Admin → restrict to their assignment
         elif hasattr(user, "role") and user.role.name.lower() == "admin":
-            hotel = getattr(user, "hotel", None) or getattr(
-                getattr(user, "staff_profile", None), "hotel", None
-            )
-            if not hotel:
-                return Response({"error": "Admin not linked to any hotel."}, status=status.HTTP_400_BAD_REQUEST)
-            staffs = staffs.filter(hotel=hotel)
+            hotel = Hotel.objects.filter(owner=user).first()
+            restaurant = Restaurant.objects.filter(owner=user).first()
 
-        total_staff = staffs.count()
-        active_staff = staffs.filter(status='active').count()
+            if hotel:
+                staffs = staffs.filter(assignments__hotel=hotel)
 
-        # Calculate average performance (if property exists)
+            elif restaurant:
+                staffs = staffs.filter(assignments__restaurant=restaurant)
+
+            else:
+                return Response(
+                    {"error": "Admin not linked to any hotel or restaurant."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        total_staff = staffs.distinct().count()
+        active_staff = staffs.filter(status='active').distinct().count()
+
         avg_performance = 0.0
         if total_staff > 0:
             scores = [s.performance_score or 0 for s in staffs]
             avg_performance = round(sum(scores) / total_staff, 2)
 
-        # Monthly payroll
-        monthly_payroll = staffs.aggregate(total=Sum('monthly_salary'))['total'] or 0
+        monthly_payroll = staffs.aggregate(
+            total=Sum('monthly_salary')
+        )['total'] or 0
 
         return Response({
             "total_staff": total_staff,
@@ -150,8 +233,8 @@ class StaffViewSet(ProtectedModelViewSet):
             "avg_performance": f"{avg_performance}%",
             "monthly_payroll": float(monthly_payroll),
         })
-        
-        
+
+         
 class AttendanceViewSet(ProtectedModelViewSet):
     """
     Manage staff attendance records.
@@ -231,8 +314,6 @@ class AttendanceViewSet(ProtectedModelViewSet):
 
         return Response({"message": f"Auto checked out {auto_checked} staff at 8 PM."}, status=status.HTTP_200_OK)
 
-    
-from datetime import date
 
 class PayrollViewSet(ProtectedModelViewSet):
     queryset = Payroll.objects.all().select_related('staff__user')
@@ -355,7 +436,6 @@ class LeaveViewSet(ProtectedModelViewSet):
         leave.approved_by = request.user
         leave.save(update_fields=['status', 'approved_by'])
         return Response({"message": "Leave rejected."})
-
 
 
 class StaffDashboardViewSet(ProtectedModelViewSet):

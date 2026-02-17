@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from .permissions import HasModelPermission
 from .models import Role, AppModel, PermissionType, RoleModelPermission, AuditLog
 from .serializers import (
@@ -9,6 +9,7 @@ from .serializers import (
     AuditLogSerializer
 )
 from .utils import serialize_instance
+from .mixins import ModuleScopeMixin
 from django.db.models.signals import post_save
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -23,7 +24,7 @@ from rest_framework import serializers
 User = get_user_model()
 
 
-class ProtectedModelViewSet(viewsets.ModelViewSet):
+class ProtectedModelViewSet(ModuleScopeMixin, ModelViewSet):
     model_name = None
     permission_code = 'r'
     permission_classes = [HasModelPermission]
@@ -219,7 +220,7 @@ class RoleModelPermissionBulkViewSet(ProtectedModelViewSet):
         return Response(result)
 
 
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+class AuditLogViewSet(ReadOnlyModelViewSet):
     """
     Read-only audit logs view with role-based data filtering.
     - Superusers → all logs

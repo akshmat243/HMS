@@ -3,6 +3,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.core.exceptions import ValidationError
@@ -61,7 +62,16 @@ class Invoice(models.Model):
         return None'''
 
     def clean(self):
-        super().clean()
+        if self.content_type and self.object_id:
+            model_class = self.content_type.model_class()
+            if not model_class.objects.filter(id=self.object_id).exists():
+                raise ValidationError(
+                    f"Referenced {model_class.__name__} with ID {self.object_id} does not exist"
+                )
+        elif bool(self.content_type) != bool(self.object_id):
+            raise ValidationError(
+                "Both content_type and object_id must be set together or both null"
+            )
         if self.amount_paid and self.total_amount:
             if self.amount_paid > self.total_amount:
                 raise ValidationError({
@@ -69,18 +79,12 @@ class Invoice(models.Model):
                 })
 
     def save(self, *args, **kwargs):
+        self.full_clean()  # Ensure clean() is called before saving
         if not self.slug:
             year = timezone.now().year
             prefix = f"INV-{year}-"
             last = Invoice.objects.filter(slug__startswith=prefix).count() + 1
             self.slug = f"{prefix}{last:04d}"
-
-        if self.amount_paid >= self.total_amount:
-            self.status = 'paid'
-        elif self.amount_paid > 0:
-            self.status = 'partial'
-        else:
-            self.status = 'unpaid'
 
         super().save(*args, **kwargs)
 
@@ -96,6 +100,30 @@ class Invoice(models.Model):
     def balance_due(self):
         return max(self.total_amount - self.amount_paid, 0)
 
+    from django.db import transaction    
+    @transaction.atomic
+    def mark_as_paid(self, payment, reason=""):
+        old_status = self.status
+        self.status = 'paid'
+        self.save()
+        
+        InvoiceStatusChange.objects.create(
+            invoice=self,
+            old_status=old_status,
+            new_status='paid',
+            reason=reason or f"Payment {payment.id} received"
+        )
+        
+class InvoiceStatusChange(models.Model):
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='status_changes')
+    old_status = models.CharField(max_length=20)
+    new_status = models.CharField(max_length=20)
+    reason = models.TextField()
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Invoice {self.invoice.slug} status changed from {self.old_status} to {self.new_status}"
 
 class InvoiceItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -124,14 +152,31 @@ class Payment(models.Model):
         ('online', 'Online'),
         ('wallet', 'Wallet'),
     ]
+    PAYMENT_STATUS = [('pending', 'Pending'), ('success', 'Success'), ('failed', 'Failed')]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payments')
     slug = models.SlugField(unique=True, blank=True)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_id = models.CharField(max_length=100, unique=True)
     payment_date = models.DateTimeField(auto_now_add=True)
     method = models.CharField(max_length=20, choices=METHOD_CHOICES)
+    status = models.CharField(max_length=20, choices=PAYMENT_STATUS, default='pending')
     reference = models.CharField(max_length=100, blank=True)
+    
+    @transaction.atomic
+    def process(self):
+        # Verify no duplicate transaction
+        if Payment.objects.filter(transaction_id=self.transaction_id).exists():
+            raise ValidationError("Duplicate payment transaction")
+        
+        self.save()
+        
+        # Update invoice atomically
+        invoice = Invoice.objects.select_for_update().get(id=self.invoice.id)
+        invoice.amount_paid = invoice.amount_paid + self.amount_paid
+        invoice.status = 'paid' if invoice.amount_paid >= invoice.total_amount else 'partial'
+        invoice.save()
 
     def save(self, *args, **kwargs):
         if not self.slug:

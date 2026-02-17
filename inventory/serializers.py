@@ -28,7 +28,6 @@ class SupplierSerializer(serializers.ModelSerializer):
         return value
 
 
-# Category
 class InventoryCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = InventoryCategory

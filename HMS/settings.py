@@ -30,8 +30,6 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost").split(" ")
 
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -212,6 +210,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8080",
+    # "https://www.hms.atsglobaltech.in",
 ]
 
 
@@ -253,3 +252,5 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Real Estate <noreply@rea
 
 # Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:8080')

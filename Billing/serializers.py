@@ -4,6 +4,7 @@ from MBP.models import AuditLog
 from django.utils import timezone
 from datetime import datetime
 from django.utils.timesince import timesince
+from django.db import transaction
 from Hotel.models import Room
 import uuid
 
@@ -81,6 +82,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'slug', 'issued_at', 'status')
 
+    @transaction.atomic
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         invoice = Invoice.objects.create(**validated_data)

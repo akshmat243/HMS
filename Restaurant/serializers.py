@@ -8,6 +8,7 @@ from .models import (
 from Hotel.models import Hotel
 from Hotel.utils import ensure_module
 from django.core.validators import RegexValidator
+from django.db import transaction
 
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -269,7 +270,8 @@ class RestaurantOrderSerializer(serializers.ModelSerializer):
     # ------------------------
     # CREATE
     # ------------------------
-
+    
+    @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
         user = request.user
@@ -473,6 +475,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
 
         return data
 
+    @transaction.atomic
     def create(self, validated_data):
         table = validated_data["table"]
 

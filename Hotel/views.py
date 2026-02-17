@@ -1406,7 +1406,7 @@ class BookingViewSet(ProtectedModelViewSet):
             return qs.filter(user=user)
 
 
-        # ❌ Others — no access
+        # Others — no access
         return qs.none()
     
     # ✅ Check-In Endpoint

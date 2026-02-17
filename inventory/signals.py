@@ -72,3 +72,31 @@ def create_supplier_user(sender, instance, created, **kwargs):
                 
         except Exception as e:
             print(f"Error in supplier signal: {e}")
+            
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .models import InventoryItem, InventoryAlert
+
+@receiver(post_save, sender=InventoryItem)
+def inventory_alert_handler(sender, instance, **kwargs):
+    if instance.stock_level <= 0:
+        InventoryAlert.objects.get_or_create(
+            item=instance,
+            level="critical",
+            is_resolved=False,
+            defaults={
+                "message": f"{instance.name} is OUT OF STOCK"
+            }
+        )
+
+    elif instance.stock_level < instance.min_stock:
+        InventoryAlert.objects.get_or_create(
+            item=instance,
+            level="low",
+            is_resolved=False,
+            defaults={
+                "message": f"{instance.name} stock is LOW ({instance.stock_level})"
+            }
+        )

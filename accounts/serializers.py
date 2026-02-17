@@ -4,6 +4,7 @@ from .models import UserModule
 from django.utils.crypto import get_random_string
 from .signals import user_created_with_password, user_registered
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 User = get_user_model()
 
@@ -25,6 +26,7 @@ class RegisterUserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this phone number already exists.")
         return value
 
+    @transaction.atomic
     def create(self, validated_data):
         password = validated_data.pop('password')
         user = User(**validated_data)
@@ -65,11 +67,12 @@ class UserSerializer(serializers.ModelSerializer):
             "password", "role_slug", "role_name", "modules",
             "is_active", "date_joined", "created_by"
         ]
-        read_only_fields = ["id", "date_joined", "created_by", "role_name", "modules"]
+        read_only_fields = ["id", "date_joined", "created_by", "role_name", "slug"]
 
     def get_created_by(self, obj):
         return obj.created_by.email if obj.created_by else None
 
+    @transaction.atomic
     def create(self, validated_data):
         request = self.context.get("request")
         creator = getattr(request, "user", None)
@@ -77,7 +80,7 @@ class UserSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password", None)
         role_slug = validated_data.pop("role_slug", None)
         modules = validated_data.pop("modules", []) 
-        # raw_password = get_random_string(10) if not password else password
+        raw_pass = get_random_string(10)  # if not password else password
 
         role = None
         if role_slug:
@@ -101,10 +104,13 @@ class UserSerializer(serializers.ModelSerializer):
 
         user.save()
         
-        for module in modules:
-            UserModule.objects.create(user=user, module=module)
+        if modules is not None:
+            UserModule.objects.filter(user=user).delete()
+            for module in modules:
+                UserModule.objects.create(user=user, module=module)
+
         
-        raw_password = password  # Store raw password for signal
+        raw_password = password if password else raw_pass  # Store raw password for signal
         
         user_created_with_password.send(
             sender=User,
