@@ -30,8 +30,6 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost").split(" ")
 
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -212,6 +210,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8080",
+    # "https://www.hms.atsglobaltech.in",
 ]
 
 

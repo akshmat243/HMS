@@ -76,6 +76,23 @@ class StaffDocumentSerializer(serializers.ModelSerializer):
             )
         return data
 
+class StaffAssignmentHistorySerializer(serializers.ModelSerializer):
+    hotel_name = serializers.CharField(source="hotel.name", read_only=True)
+    restaurant_name = serializers.CharField(source="restaurant.name", read_only=True)
+
+    class Meta:
+        model = StaffAssignment
+        fields = [
+            "id",
+            "assignment_type",
+            "hotel_name",
+            "restaurant_name",
+            "start_date",
+            "end_date",
+            "is_active",
+        ]
+
+
 class StaffSerializer(serializers.ModelSerializer):
 
     # -------- incoming helpers --------
@@ -95,6 +112,7 @@ class StaffSerializer(serializers.ModelSerializer):
     user_full_name = serializers.CharField(source="user.full_name", read_only=True)
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)
+    current_assignment = serializers.SerializerMethodField()
 
     documents_data = StaffDocumentSerializer(
         source="documents",
@@ -109,7 +127,7 @@ class StaffSerializer(serializers.ModelSerializer):
 
             # user
             "user",
-            "user_full_name", "user_email", "user_phone",
+            "user_full_name", "user_email", "user_phone", "current_assignment",
 
             # input
             "full_name", "email", "phone",
@@ -145,9 +163,21 @@ class StaffSerializer(serializers.ModelSerializer):
 
         return data
 
-    # -------------------------------------------------
-    # CREATE USER + STAFF + ASSIGNMENT + DOCUMENTS
-    # -------------------------------------------------
+    def get_current_assignment(self, obj):
+        assignment = obj.assignments.filter(is_active=True).select_related(
+            "hotel", "restaurant"
+        ).first()
+
+        if not assignment:
+            return None
+
+        return {
+            "assignment_type": assignment.assignment_type,
+            "hotel": assignment.hotel.name if assignment.hotel else None,
+            "restaurant": assignment.restaurant.name if assignment.restaurant else None,
+            "start_date": assignment.start_date,
+        }
+
     @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]

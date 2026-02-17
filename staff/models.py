@@ -88,6 +88,18 @@ class StaffAssignment(models.Model):
                 name='valid_assignment_type'
             )
         ]
+    
+    def save(self, *args, **kwargs):
+        if self.is_active:
+            StaffAssignment.objects.filter(
+                staff=self.staff,
+                is_active=True
+            ).exclude(id=self.id).update(
+                is_active=False,
+                end_date=date.today()
+            )
+        super().save(*args, **kwargs)
+
 
 class StaffDocument(models.Model):
     DOCUMENT_TYPES = [
